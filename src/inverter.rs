@@ -15,10 +15,10 @@
  */
 
 use chrono::naive::NaiveTime;
-use chrono::{DateTime, Datelike, TimeZone, Timelike};
+use chrono::{Datelike, Timelike};
 use std::io::{Error, ErrorKind};
 use tokio_modbus::client::Context;
-use tokio_modbus::prelude::Reader;
+use tokio_modbus::prelude::{Reader, Writer};
 use tokio_modbus::slave::Slave;
 
 pub const PROGRAM_BLOCKS: usize = 6;
@@ -71,14 +71,14 @@ impl Inverter {
         Ok(Self { ctx })
     }
 
-    pub async fn set_clock<Tz: TimeZone>(&mut self, dt: DateTime<Tz>) -> Result<(), Error> {
+    pub async fn set_clock<T: Datelike + Timelike>(&mut self, dt: T) -> Result<(), Error> {
         let data: [u16; 3] = [
             (((dt.year() - 2000) << 8) as u16) | (dt.month() as u16),
             ((dt.day() << 8) as u16) | (dt.hour() as u16),
             ((dt.minute() << 8) as u16) | (dt.second() as u16),
         ];
         self.ctx
-            .read_write_multiple_registers(REG_CLOCK, 0, REG_CLOCK, &data)
+            .write_multiple_registers(REG_CLOCK, &data)
             .await?;
         Ok(())
     }
@@ -110,7 +110,7 @@ impl Inverter {
             *value = get(program);
         }
         self.ctx
-            .read_write_multiple_registers(start, 0, start, &values)
+            .write_multiple_registers(start, &values)
             .await?;
         Ok(())
     }

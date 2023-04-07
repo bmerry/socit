@@ -14,19 +14,42 @@
  * with this program. If not, see <https://www.gnu.org/licenses/>.
  */
 
+use chrono::Local;
+use futures::lock::Mutex;
+use std::time::Duration;
+use std::sync::Arc;
 use std::io::Error;
 
 use espd::inverter::Inverter;
 
+/// Periodically set the inverter's time to match the system time.
+async fn time_sync(inverter: Arc<Mutex<Inverter>>) -> Result<(), Error> {
+    let mut interval = tokio::time::interval(Duration::from_secs(300));
+    loop {
+        interval.tick().await;
+        let now = Local::now();
+        inverter.lock().await.set_clock(Local::now()).await?;
+        println!("Set clock to {now}");
+    }
+}
+
 #[tokio::main(flavor = "current_thread")]
 async fn main() -> Result<(), Error> {
-    let mut inverter = Inverter::new("127.0.0.1:502", 1).await?;
-    let programs = inverter.query().await?;
+    let inverter = Arc::new(Mutex::new(Inverter::new("127.0.0.1:502", 1).await?));
+
+    let inverter2 = inverter.clone();
+    let handle = tokio::spawn(async move {
+        time_sync(inverter2).await?;
+        Ok::<(), Error>(())
+    });
+
+    let programs = inverter.lock().await.query().await?;
     for program in programs.iter() {
         println!(
             "Time: {}  Power: {}  Capacity: {}",
             program.time, program.power, program.capacity
         );
     }
+    handle.await??;
     Ok(())
 }
