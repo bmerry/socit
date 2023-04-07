@@ -1,0 +1,147 @@
+/* Copyright 2023 Bruce Merry
+ *
+ * This program is free software: you can redistribute it and/or modify it
+ * under the terms of the GNU General Public License as published by the Free
+ * Software Foundation, either version 3 of the License, or (at your option)
+ * any later version.
+ *
+ * This program is distributed in the hope that it will be useful, but WITHOUT
+ * ANY WARRANTY; without even the implied warranty of MERCHANTABILITY or
+ * FITNESS FOR A PARTICULAR PURPOSE. See the GNU General Public License for
+ * more details.
+ *
+ * You should have received a copy of the GNU General Public License along
+ * with this program. If not, see <https://www.gnu.org/licenses/>.
+ */
+
+use chrono::naive::NaiveTime;
+use chrono::{DateTime, Datelike, TimeZone, Timelike};
+use std::io::{Error, ErrorKind};
+use tokio_modbus::client::Context;
+use tokio_modbus::prelude::Reader;
+use tokio_modbus::slave::Slave;
+
+pub const PROGRAM_BLOCKS: usize = 6;
+const REG_CLOCK: u16 = 22;
+const REG_TIME: u16 = 250;
+const REG_POWER: u16 = 256;
+const REG_CAPACITY: u16 = 268;
+
+pub struct Inverter {
+    ctx: Context,
+}
+
+#[derive(Clone, Default, Eq, PartialEq)]
+pub struct Program {
+    pub time: NaiveTime,
+    pub power: u16,    // watts
+    pub capacity: u16, // %
+}
+
+/// Decode time from a modbus register.
+///
+/// If the stored time does not represent a valid time of day, returns None.
+fn decode_time(raw: u16) -> Option<NaiveTime> {
+    // The time is stored as hours * 100 + minutes.
+    let h = raw / 100;
+    let m = raw % 100;
+    NaiveTime::from_hms_opt(h.into(), m.into(), 0)
+}
+
+/// Encode time to store in a modbus register.
+///
+/// The seconds part of the time is ignored.
+fn encode_time(time: NaiveTime) -> u16 {
+    (time.hour() * 100 + time.minute()) as u16
+}
+
+impl Inverter {
+    pub async fn new(device: &str, modbus_id: u8) -> Result<Self, Error> {
+        let ctx = match device.parse() {
+            Ok(socket_addr) => {
+                tokio_modbus::client::tcp::connect_slave(socket_addr, Slave(modbus_id)).await?
+            }
+            Err(_) => {
+                // Not an address. Try it as a device file for serial
+                let serial_builder = tokio_serial::new(device, 9600);
+                let serial_stream = tokio_serial::SerialStream::open(&serial_builder)?;
+                tokio_modbus::client::rtu::connect_slave(serial_stream, Slave(modbus_id)).await?
+            }
+        };
+        Ok(Self { ctx })
+    }
+
+    pub async fn set_clock<Tz: TimeZone>(&mut self, dt: DateTime<Tz>) -> Result<(), Error> {
+        let data: [u16; 3] = [
+            (((dt.year() - 2000) << 8) as u16) | (dt.month() as u16),
+            ((dt.day() << 8) as u16) | (dt.hour() as u16),
+            ((dt.minute() << 8) as u16) | (dt.second() as u16),
+        ];
+        self.ctx
+            .read_write_multiple_registers(REG_CLOCK, 0, REG_CLOCK, &data)
+            .await?;
+        Ok(())
+    }
+
+    async fn query_field(
+        &mut self,
+        programs: &mut [Program],
+        start: u16,
+        apply: impl Fn(&mut Program, u16),
+    ) -> Result<(), Error> {
+        let values = self
+            .ctx
+            .read_holding_registers(start, PROGRAM_BLOCKS as u16)
+            .await?;
+        for (program, value) in programs.iter_mut().zip(values) {
+            apply(program, value);
+        }
+        Ok(())
+    }
+
+    async fn set_field(
+        &mut self,
+        programs: &[Program],
+        start: u16,
+        get: impl Fn(&Program) -> u16,
+    ) -> Result<(), Error> {
+        let mut values = [0u16; PROGRAM_BLOCKS];
+        for (program, value) in programs.iter().zip(values.iter_mut()) {
+            *value = get(program);
+        }
+        self.ctx
+            .read_write_multiple_registers(start, 0, start, &values)
+            .await?;
+        Ok(())
+    }
+
+    pub async fn query(&mut self) -> Result<Vec<Program>, Error> {
+        let mut programs = vec![Program::default(); PROGRAM_BLOCKS];
+        self.query_field(&mut programs, REG_TIME, |program, x| {
+            program.time = decode_time(x).unwrap_or(NaiveTime::default());
+        })
+        .await?;
+        self.query_field(&mut programs, REG_POWER, |program, x| {
+            program.power = x;
+        })
+        .await?;
+        self.query_field(&mut programs, REG_CAPACITY, |program, x| {
+            program.capacity = x;
+        })
+        .await?;
+        Ok(programs)
+    }
+
+    pub async fn set(&mut self, programs: &[Program]) -> Result<(), Error> {
+        if programs.len() != PROGRAM_BLOCKS {
+            return Err(Error::new(
+                ErrorKind::InvalidInput,
+                "wrong number of programs",
+            ));
+        }
+        self.set_field(programs, REG_TIME, |program| encode_time(program.time)).await?;
+        self.set_field(programs, REG_POWER, |program| program.power).await?;
+        self.set_field(programs, REG_CAPACITY, |program| program.capacity).await?;
+        Ok(())
+    }
+}
