@@ -16,10 +16,12 @@
 
 use chrono::Local;
 use futures::lock::Mutex;
-use std::time::Duration;
-use std::sync::Arc;
 use std::io::Error;
+use std::sync::Arc;
+use std::time::Duration;
 
+use espd::config::Config;
+use espd::esp_api::API;
 use espd::inverter::Inverter;
 
 /// Periodically set the inverter's time to match the system time.
@@ -34,22 +36,33 @@ async fn time_sync(inverter: Arc<Mutex<Inverter>>) -> Result<(), Error> {
 }
 
 #[tokio::main(flavor = "current_thread")]
-async fn main() -> Result<(), Error> {
-    let inverter = Arc::new(Mutex::new(Inverter::new("127.0.0.1:502", 1).await?));
+async fn main() -> Result<(), Box<dyn std::error::Error>> {
+    let config: Config = toml::from_str(&std::fs::read_to_string("espd.toml")?)?;
 
-    let inverter2 = inverter.clone();
-    let handle = tokio::spawn(async move {
-        time_sync(inverter2).await?;
-        Ok::<(), Error>(())
-    });
+    if false {
+        let inverter = Arc::new(Mutex::new(
+            Inverter::new(&config.inverter.device, config.inverter.id).await?,
+        ));
 
-    let programs = inverter.lock().await.query().await?;
-    for program in programs.iter() {
-        println!(
-            "Time: {}  Power: {}  Capacity: {}",
-            program.time, program.power, program.capacity
-        );
+        let inverter2 = inverter.clone();
+        let _handle = tokio::spawn(async move {
+            time_sync(inverter2).await?;
+            Ok::<(), Error>(())
+        });
+
+        let programs = inverter.lock().await.query().await?;
+        for program in programs.iter() {
+            println!(
+                "Time: {}  Power: {}  Capacity: {}",
+                program.time, program.power, program.capacity
+            );
+        }
     }
-    handle.await??;
+
+    let api = API::new(config.esp.key)?;
+    let response = api.area("capetown-11-bergvliet").await?;
+    println!("{response:?}");
+
+    // handle.await??;
     Ok(())
 }

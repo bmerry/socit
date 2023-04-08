@@ -77,9 +77,7 @@ impl Inverter {
             ((dt.day() << 8) as u16) | (dt.hour() as u16),
             ((dt.minute() << 8) as u16) | (dt.second() as u16),
         ];
-        self.ctx
-            .write_multiple_registers(REG_CLOCK, &data)
-            .await?;
+        self.ctx.write_multiple_registers(REG_CLOCK, &data).await?;
         Ok(())
     }
 
@@ -109,9 +107,7 @@ impl Inverter {
         for (program, value) in programs.iter().zip(values.iter_mut()) {
             *value = get(program);
         }
-        self.ctx
-            .write_multiple_registers(start, &values)
-            .await?;
+        self.ctx.write_multiple_registers(start, &values).await?;
         Ok(())
     }
 
@@ -139,9 +135,12 @@ impl Inverter {
                 "wrong number of programs",
             ));
         }
-        self.set_field(programs, REG_TIME, |program| encode_time(program.time)).await?;
-        self.set_field(programs, REG_POWER, |program| program.power).await?;
-        self.set_field(programs, REG_CAPACITY, |program| program.capacity).await?;
+        self.set_field(programs, REG_TIME, |program| encode_time(program.time))
+            .await?;
+        self.set_field(programs, REG_POWER, |program| program.power)
+            .await?;
+        self.set_field(programs, REG_CAPACITY, |program| program.capacity)
+            .await?;
         Ok(())
     }
 }

@@ -14,6 +14,35 @@
  * with this program. If not, see <https://www.gnu.org/licenses/>.
  */
 
-pub mod config;
-pub mod esp_api;
-pub mod inverter;
+use chrono::naive::NaiveTime;
+use serde::Deserialize;
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct InverterConfig {
+    pub device: String,
+    #[serde(default = "id_default")]
+    pub id: u8,
+    pub min_capacity: u16,
+    pub discharge: f64,
+    pub charge: f64,
+    pub sunset: Option<NaiveTime>,
+}
+
+fn id_default() -> u8 {
+    1
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct EspConfig {
+    pub key: String,
+    pub area: String,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct Config {
+    pub inverter: InverterConfig,
+    pub esp: EspConfig,
+}
