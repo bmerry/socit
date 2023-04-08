@@ -20,33 +20,33 @@ use reqwest::Client;
 use serde::Deserialize;
 use std::time::Duration;
 
-#[derive(Debug, Deserialize)]
+#[derive(Clone, Debug, Deserialize)]
 pub struct Event {
     pub start: DateTime<Utc>,
     pub end: DateTime<Utc>,
     pub note: String,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Clone, Debug, Deserialize)]
 pub struct Info {
     pub name: String,
     pub region: String,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Clone, Debug, Deserialize)]
 pub struct ScheduleDay {
     pub date: NaiveDate,
     pub name: String,
     pub stages: Vec<Vec<String>>,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Clone, Debug, Deserialize)]
 pub struct Schedule {
     pub days: Vec<ScheduleDay>,
     pub source: String,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Clone, Debug, Deserialize)]
 pub struct AreaResponse {
     pub events: Vec<Event>,
     pub info: Info,

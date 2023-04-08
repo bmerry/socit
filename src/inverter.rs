@@ -23,8 +23,8 @@ use tokio_modbus::slave::Slave;
 
 pub const PROGRAM_BLOCKS: usize = 6;
 const REG_CLOCK: u16 = 22;
+const REG_SOC: u16 = 184;
 const REG_TIME: u16 = 250;
-const REG_POWER: u16 = 256;
 const REG_CAPACITY: u16 = 268;
 
 pub struct Inverter {
@@ -34,7 +34,6 @@ pub struct Inverter {
 #[derive(Clone, Default, Eq, PartialEq)]
 pub struct Program {
     pub time: NaiveTime,
-    pub power: u16,    // watts
     pub capacity: u16, // %
 }
 
@@ -81,7 +80,11 @@ impl Inverter {
         Ok(())
     }
 
-    async fn query_field(
+    pub async fn get_soc(&mut self) -> Result<u16, Error> {
+        Ok(self.ctx.read_holding_registers(REG_SOC, 1).await?[0])
+    }
+
+    async fn get_program_field(
         &mut self,
         programs: &mut [Program],
         start: u16,
@@ -97,7 +100,7 @@ impl Inverter {
         Ok(())
     }
 
-    async fn set_field(
+    async fn set_program_field(
         &mut self,
         programs: &[Program],
         start: u16,
@@ -111,35 +114,29 @@ impl Inverter {
         Ok(())
     }
 
-    pub async fn query(&mut self) -> Result<Vec<Program>, Error> {
+    pub async fn get_programs(&mut self) -> Result<Vec<Program>, Error> {
         let mut programs = vec![Program::default(); PROGRAM_BLOCKS];
-        self.query_field(&mut programs, REG_TIME, |program, x| {
+        self.get_program_field(&mut programs, REG_TIME, |program, x| {
             program.time = decode_time(x).unwrap_or(NaiveTime::default());
         })
         .await?;
-        self.query_field(&mut programs, REG_POWER, |program, x| {
-            program.power = x;
-        })
-        .await?;
-        self.query_field(&mut programs, REG_CAPACITY, |program, x| {
+        self.get_program_field(&mut programs, REG_CAPACITY, |program, x| {
             program.capacity = x;
         })
         .await?;
         Ok(programs)
     }
 
-    pub async fn set(&mut self, programs: &[Program]) -> Result<(), Error> {
+    pub async fn set_programs(&mut self, programs: &[Program]) -> Result<(), Error> {
         if programs.len() != PROGRAM_BLOCKS {
             return Err(Error::new(
                 ErrorKind::InvalidInput,
                 "wrong number of programs",
             ));
         }
-        self.set_field(programs, REG_TIME, |program| encode_time(program.time))
+        self.set_program_field(programs, REG_TIME, |program| encode_time(program.time))
             .await?;
-        self.set_field(programs, REG_POWER, |program| program.power)
-            .await?;
-        self.set_field(programs, REG_CAPACITY, |program| program.capacity)
+        self.set_program_field(programs, REG_CAPACITY, |program| program.capacity)
             .await?;
         Ok(())
     }

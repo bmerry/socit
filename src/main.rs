@@ -14,55 +14,38 @@
  * with this program. If not, see <https://www.gnu.org/licenses/>.
  */
 
-use chrono::Local;
 use futures::lock::Mutex;
-use std::io::Error;
+use log::info;
 use std::sync::Arc;
-use std::time::Duration;
 
 use espd::config::Config;
+use espd::control;
 use espd::esp_api::API;
 use espd::inverter::Inverter;
 
-/// Periodically set the inverter's time to match the system time.
-async fn time_sync(inverter: Arc<Mutex<Inverter>>) -> Result<(), Error> {
-    let mut interval = tokio::time::interval(Duration::from_secs(300));
-    loop {
-        interval.tick().await;
-        let now = Local::now();
-        inverter.lock().await.set_clock(Local::now()).await?;
-        println!("Set clock to {now}");
-    }
-}
-
 #[tokio::main(flavor = "current_thread")]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
+    env_logger::init();
     let config: Config = toml::from_str(&std::fs::read_to_string("espd.toml")?)?;
 
-    if false {
-        let inverter = Arc::new(Mutex::new(
-            Inverter::new(&config.inverter.device, config.inverter.id).await?,
-        ));
-
-        let inverter2 = inverter.clone();
-        let _handle = tokio::spawn(async move {
-            time_sync(inverter2).await?;
-            Ok::<(), Error>(())
-        });
-
-        let programs = inverter.lock().await.query().await?;
-        for program in programs.iter() {
-            println!(
-                "Time: {}  Power: {}  Capacity: {}",
-                program.time, program.power, program.capacity
-            );
-        }
+    let inverter = Mutex::new(Inverter::new(&config.inverter.device, config.inverter.id).await?);
+    let programs = inverter.lock().await.get_programs().await?;
+    for (i, program) in programs.iter().enumerate() {
+        info!("Program {}: {}: {}", i, program.time, program.capacity);
     }
 
+    let response = Arc::new(std::sync::Mutex::new(None));
+    let response2 = response.clone();
     let api = API::new(config.esp.key)?;
-    let response = api.area("capetown-11-bergvliet").await?;
-    println!("{response:?}");
+    let esp_handle = tokio::spawn(async move {
+        control::poll_esp(&api, &config.esp.area, &response).await;
+    });
+    let control_handle = tokio::spawn(async move {
+        control::control_inverter(inverter, &config.inverter, &response2).await;
+    });
 
-    // handle.await??;
+    // These should never return, since the tasks should run forever
+    esp_handle.await?;
+    control_handle.await?;
     Ok(())
 }

@@ -23,14 +23,23 @@ pub struct InverterConfig {
     pub device: String,
     #[serde(default = "id_default")]
     pub id: u8,
-    pub min_capacity: u16,
+    pub capacity: f64, // TODO get from inverter
+    // TODO: validation of range
+    pub min_soc: u16,
+    pub fallback_soc: u16,
     pub discharge: f64,
-    pub charge: f64,
+    pub charge: f64, // TODO get from inverter
     pub sunset: Option<NaiveTime>,
+    #[serde(default = "dry_run_default")]
+    pub dry_run: bool,
 }
 
 fn id_default() -> u8 {
     1
+}
+
+fn dry_run_default() -> bool {
+    false
 }
 
 #[derive(Deserialize)]
