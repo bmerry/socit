@@ -31,6 +31,12 @@ pub struct State {
     pub time: DateTime<Utc>,
 }
 
+enum LoadShedding {
+    Never,
+    Unknown,
+    Soon(DateTime<Utc>, DateTime<Utc>),
+}
+
 pub async fn poll_esp(api: &API, area_id: &str, state: &Mutex<Option<State>>) {
     let mut interval = tokio::time::interval(std::time::Duration::from_secs(3600));
     interval.set_missed_tick_behavior(MissedTickBehavior::Delay);
@@ -53,23 +59,27 @@ pub async fn poll_esp(api: &API, area_id: &str, state: &Mutex<Option<State>>) {
     }
 }
 
-fn next_load_shedding(
-    state: &Option<State>,
-    now: &DateTime<Utc>,
-) -> Option<(DateTime<Utc>, DateTime<Utc>)> {
-    let state = state.as_ref()?;
-    // TODO: make timeout configurable
-    if *now - state.time > Duration::seconds(4 * 3600) {
-        None // Load-shedding information is too stale: assume the worst
-    } else {
-        // Get the earliest event that isn't in the past
-        let event = state
-            .response
-            .events
-            .iter()
-            .filter(|event| &event.end > now)
-            .min_by_key(|event| event.start)?;
-        Some((*max(&event.start, now), event.end))
+fn next_load_shedding(state: &Option<State>, now: &DateTime<Utc>) -> LoadShedding {
+    match state {
+        None => LoadShedding::Unknown,
+        Some(state) => {
+            // TODO: make timeout configurable
+            if *now - state.time > Duration::seconds(4 * 3600) {
+                LoadShedding::Unknown // Load-shedding information is too stale
+            } else {
+                // Get the earliest event that isn't in the past
+                match state
+                    .response
+                    .events
+                    .iter()
+                    .filter(|event| &event.end > now)
+                    .min_by_key(|event| event.start)
+                {
+                    Some(event) => LoadShedding::Soon(*max(&event.start, now), event.end),
+                    None => LoadShedding::Never,
+                }
+            }
+        }
     }
 }
 
@@ -105,9 +115,8 @@ async fn update_inverter(
         inverter.set_clock(&now_local).await?;
     }
 
-    let current_soc = inverter.get_soc().await?;
     let target_soc: u16 = match next_load_shedding(&state.lock().unwrap(), &now) {
-        Some((start, end)) => {
+        LoadShedding::Soon(start, end) => {
             // _wh suffix indices _wh; _soc indicates percentage
             let end_wh = (config.min_soc as f64) * 0.01 * config.capacity;
             let length = duration_hours(end - start);
@@ -115,13 +124,10 @@ async fn update_inverter(
             let start_wh = end_wh + config.charge * length;
             let now_wh = start_wh - config.discharge * duration_hours(start - now);
             let now_soc = now_wh / config.capacity;
-            if (current_soc as f64) < now_soc {
-                round_soc(start_wh / config.capacity)
-            } else {
-                config.min_soc
-            }
+            max(config.min_soc, round_soc(now_soc))
         }
-        None => config.fallback_soc,
+        LoadShedding::Never => config.min_soc,
+        LoadShedding::Unknown => config.fallback_soc,
     };
 
     let mut programs = vec![Program::default(); PROGRAM_BLOCKS];
