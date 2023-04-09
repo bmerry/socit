@@ -71,7 +71,7 @@ impl API {
     pub async fn area(&self, id: &str) -> reqwest::Result<AreaResponse> {
         self.client
             .get("https://developer.sepush.co.za/business/2.0/area")
-            .query(&[("id", id), ("test", "future")])
+            .query(&[("id", id), ("test", "current")])
             .header("Token", &self.key)
             .send()
             .await?

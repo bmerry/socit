@@ -40,6 +40,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         control::poll_esp(&api, &config.esp.area, &state).await;
     });
     let control_handle = tokio::spawn(async move {
+        // Give poll_esp some time to load the first set of information
+        tokio::time::sleep(std::time::Duration::from_secs(5)).await;
         control::control_inverter(&mut inverter, &config.inverter, &state2).await;
     });
 
