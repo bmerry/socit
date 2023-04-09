@@ -14,7 +14,6 @@
  * with this program. If not, see <https://www.gnu.org/licenses/>.
  */
 
-use futures::lock::Mutex;
 use log::info;
 use std::sync::Arc;
 
@@ -28,20 +27,20 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     env_logger::init();
     let config: Config = toml::from_str(&std::fs::read_to_string("espd.toml")?)?;
 
-    let inverter = Mutex::new(Inverter::new(&config.inverter.device, config.inverter.id).await?);
-    let programs = inverter.lock().await.get_programs().await?;
+    let mut inverter = Inverter::new(&config.inverter.device, config.inverter.id).await?;
+    let programs = inverter.get_programs().await?;
     for (i, program) in programs.iter().enumerate() {
         info!("Program {}: {}: {}", i, program.time, program.capacity);
     }
 
-    let response = Arc::new(std::sync::Mutex::new(None));
-    let response2 = response.clone();
+    let state = Arc::new(std::sync::Mutex::new(None));
+    let state2 = state.clone();
     let api = API::new(config.esp.key)?;
     let esp_handle = tokio::spawn(async move {
-        control::poll_esp(&api, &config.esp.area, &response).await;
+        control::poll_esp(&api, &config.esp.area, &state).await;
     });
     let control_handle = tokio::spawn(async move {
-        control::control_inverter(inverter, &config.inverter, &response2).await;
+        control::control_inverter(inverter, &config.inverter, &state2).await;
     });
 
     // These should never return, since the tasks should run forever
