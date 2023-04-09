@@ -40,7 +40,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         control::poll_esp(&api, &config.esp.area, &state).await;
     });
     let control_handle = tokio::spawn(async move {
-        control::control_inverter(inverter, &config.inverter, &state2).await;
+        control::control_inverter(&mut inverter, &config.inverter, &state2).await;
     });
 
     // These should never return, since the tasks should run forever
