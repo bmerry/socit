@@ -14,7 +14,6 @@
  * with this program. If not, see <https://www.gnu.org/licenses/>.
  */
 
-use chrono::naive::NaiveTime;
 use serde::Deserialize;
 
 #[derive(Deserialize)]
@@ -23,13 +22,10 @@ pub struct InverterConfig {
     pub device: String,
     #[serde(default = "id_default")]
     pub id: u8,
-    pub capacity: f64, // TODO get from inverter
     // TODO: validation of range
     pub min_soc: u16,
     pub fallback_soc: u16,
     pub discharge: f64,
-    pub charge: f64, // TODO get from inverter
-    pub sunset: Option<NaiveTime>,
     #[serde(default = "dry_run_default")]
     pub dry_run: bool,
 }

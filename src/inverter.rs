@@ -24,6 +24,9 @@ use tokio_modbus::slave::Slave;
 pub const PROGRAM_BLOCKS: usize = 6;
 const REG_CLOCK: u16 = 22;
 const REG_SOC: u16 = 184;
+const REG_BATTERY_CAPACITY_AH: u16 = 204;
+const REG_BATTERY_RESTART_VOLTAGE: u16 = 221;
+const REG_GRID_CHARGE_CURRENT: u16 = 230;
 const REG_PROGRAM_TIME: u16 = 250;
 const REG_PROGRAM_SOC: u16 = 268;
 
@@ -35,6 +38,11 @@ pub struct Inverter {
 pub struct Program {
     pub time: NaiveTime,
     pub soc: u16, // %
+}
+
+pub struct Info {
+    pub capacity: f64,    // Wh
+    pub charge_rate: f64, // W
 }
 
 /// Decode time from a modbus register.
@@ -68,6 +76,28 @@ impl Inverter {
             }
         };
         Ok(Self { ctx })
+    }
+
+    pub async fn get_info(&mut self) -> Result<Info, Error> {
+        let capacity_ah = self
+            .ctx
+            .read_holding_registers(REG_BATTERY_CAPACITY_AH, 1)
+            .await?[0] as f64;
+        // There are many voltages (low, restart, equalisation, float... this one seems
+        // as good as any.
+        let voltage = self
+            .ctx
+            .read_holding_registers(REG_BATTERY_RESTART_VOLTAGE, 1)
+            .await?[0] as f64
+            * 0.01;
+        let charge = self
+            .ctx
+            .read_holding_registers(REG_GRID_CHARGE_CURRENT, 1)
+            .await?[0] as f64;
+        Ok(Info {
+            capacity: capacity_ah * voltage,
+            charge_rate: charge * voltage,
+        })
     }
 
     pub async fn set_clock<T: Datelike + Timelike>(&mut self, dt: &T) -> Result<(), Error> {

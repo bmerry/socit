@@ -115,17 +115,18 @@ async fn update_inverter(
     if !config.dry_run {
         inverter.set_clock(&now_local).await?;
     }
+    let info = inverter.get_info().await?;
 
     let target_soc: u16 = match next_load_shedding(&state.lock().unwrap(), &now) {
         LoadShedding::Soon(start, end) => {
             info!("Load shedding from {start} to {end}");
             // _wh suffix indices _wh; _soc indicates percentage
-            let end_wh = (config.min_soc as f64) * 0.01 * config.capacity;
+            let end_wh = (config.min_soc as f64) * 0.01 * info.capacity;
             let length = duration_hours(end - start);
             // TODO: add in solar here
             let start_wh = end_wh + config.discharge * length;
-            let now_wh = start_wh - config.charge * duration_hours(start - now);
-            let now_soc: f64 = now_wh / config.capacity * 100.0;
+            let now_wh = start_wh - info.charge_rate * duration_hours(start - now);
+            let now_soc: f64 = now_wh / info.capacity * 100.0;
             max(config.min_soc, round_soc(now_soc))
         }
         LoadShedding::Never => {
