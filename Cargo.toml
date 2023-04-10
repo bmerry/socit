@@ -20,7 +20,7 @@ version = "0.1.0"
 edition = "2021"
 authors = ["Bruce Merry"]
 license = "GPL-3.0-or-later"
-description = "Adjust inverter settings based on load-shedding informatio from EskomSePush API"
+description = "Adjust inverter settings based on load-shedding information from EskomSePush API"
 repository = "https://github.com/bmerry/espd"
 
 [dependencies]
