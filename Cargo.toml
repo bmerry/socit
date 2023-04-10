@@ -23,6 +23,10 @@ license = "GPL-3.0-or-later"
 description = "Adjust inverter settings based on load-shedding information from EskomSePush API"
 repository = "https://github.com/bmerry/espd"
 
+[profile.release]
+strip = true
+lto = true
+
 [dependencies]
 chrono = { version = "0.4.24", default-features = false, features = ["clock", "serde", "time"] }
 env_logger = "0.10.0"
