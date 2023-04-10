@@ -24,8 +24,8 @@ use tokio_modbus::slave::Slave;
 pub const PROGRAM_BLOCKS: usize = 6;
 const REG_CLOCK: u16 = 22;
 const REG_SOC: u16 = 184;
-const REG_TIME: u16 = 250;
-const REG_CAPACITY: u16 = 268;
+const REG_PROGRAM_TIME: u16 = 250;
+const REG_PROGRAM_SOC: u16 = 268;
 
 pub struct Inverter {
     ctx: Context,
@@ -34,7 +34,7 @@ pub struct Inverter {
 #[derive(Clone, Default, Eq, PartialEq)]
 pub struct Program {
     pub time: NaiveTime,
-    pub capacity: u16, // %
+    pub soc: u16, // %
 }
 
 /// Decode time from a modbus register.
@@ -116,12 +116,12 @@ impl Inverter {
 
     pub async fn get_programs(&mut self) -> Result<Vec<Program>, Error> {
         let mut programs = vec![Program::default(); PROGRAM_BLOCKS];
-        self.get_program_field(&mut programs, REG_TIME, |program, x| {
+        self.get_program_field(&mut programs, REG_PROGRAM_TIME, |program, x| {
             program.time = decode_time(x).unwrap_or(NaiveTime::default());
         })
         .await?;
-        self.get_program_field(&mut programs, REG_CAPACITY, |program, x| {
-            program.capacity = x;
+        self.get_program_field(&mut programs, REG_PROGRAM_SOC, |program, x| {
+            program.soc = x;
         })
         .await?;
         Ok(programs)
@@ -134,9 +134,11 @@ impl Inverter {
                 "wrong number of programs",
             ));
         }
-        self.set_program_field(programs, REG_TIME, |program| encode_time(program.time))
-            .await?;
-        self.set_program_field(programs, REG_CAPACITY, |program| program.capacity)
+        self.set_program_field(programs, REG_PROGRAM_TIME, |program| {
+            encode_time(program.time)
+        })
+        .await?;
+        self.set_program_field(programs, REG_PROGRAM_SOC, |program| program.soc)
             .await?;
         Ok(())
     }

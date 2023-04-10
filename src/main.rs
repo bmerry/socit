@@ -30,7 +30,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut inverter = Inverter::new(&config.inverter.device, config.inverter.id).await?;
     let programs = inverter.get_programs().await?;
     for (i, program) in programs.iter().enumerate() {
-        info!("Program {}: {}: {}", i, program.time, program.capacity);
+        info!("Program {}: {}: {}", i, program.time, program.soc);
     }
 
     let state = Arc::new(std::sync::Mutex::new(None));

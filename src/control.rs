@@ -149,9 +149,9 @@ async fn update_inverter(
         programs[i].time = programs[i - 1].time + step;
     }
     // Set target_soc for the current program, fallback_soc for the rest
-    programs[0].capacity = target_soc;
+    programs[0].soc = target_soc;
     for program in programs[1..PROGRAM_BLOCKS].iter_mut() {
-        program.capacity = config.fallback_soc;
+        program.soc = config.fallback_soc;
     }
     // In some cases the programs will wrap past midnight. Cycle things to keep
     // the start times sorted.
@@ -167,7 +167,7 @@ async fn update_inverter(
             "Setting program {} to {}: {}",
             i + 1,
             program.time,
-            program.capacity
+            program.soc
         );
     }
     if !config.dry_run {
