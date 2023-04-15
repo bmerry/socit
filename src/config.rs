@@ -15,6 +15,7 @@
  */
 
 use serde::Deserialize;
+use std::time::Duration;
 
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -43,6 +44,8 @@ fn dry_run_default() -> bool {
 pub struct EspConfig {
     pub key: String,
     pub area: String,
+    #[serde(default = "interval_default", with = "humantime_serde")]
+    pub interval: Duration,
 }
 
 #[derive(Deserialize)]
@@ -50,4 +53,9 @@ pub struct EspConfig {
 pub struct Config {
     pub inverter: InverterConfig,
     pub esp: EspConfig,
+}
+
+fn interval_default() -> Duration {
+    // Default to one hour
+    Duration::from_secs(3600)
 }

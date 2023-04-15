@@ -37,8 +37,13 @@ enum LoadShedding {
     Soon(DateTime<Utc>, DateTime<Utc>),
 }
 
-pub async fn poll_esp(api: &API, area_id: &str, state: &Mutex<Option<State>>) {
-    let mut interval = tokio::time::interval(std::time::Duration::from_secs(3600));
+pub async fn poll_esp(
+    api: &API,
+    area_id: &str,
+    interval: std::time::Duration,
+    state: &Mutex<Option<State>>,
+) {
+    let mut interval = tokio::time::interval(interval);
     interval.set_missed_tick_behavior(MissedTickBehavior::Delay);
     loop {
         interval.tick().await;

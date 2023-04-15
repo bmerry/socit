@@ -37,7 +37,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let state2 = state.clone();
     let api = API::new(config.esp.key)?;
     let esp_handle = tokio::spawn(async move {
-        control::poll_esp(&api, &config.esp.area, &state).await;
+        control::poll_esp(&api, &config.esp.area, config.esp.interval, &state).await;
     });
     let control_handle = tokio::spawn(async move {
         // Give poll_esp some time to load the first set of information
