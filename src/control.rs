@@ -119,8 +119,11 @@ async fn update_inverter(
 
     let target_soc: u16 = match next_load_shedding(&state.lock().unwrap(), &now) {
         LoadShedding::Soon(start, end) => {
-            info!("Load shedding from {start} to {end}");
-            // _wh suffix indices _wh; _soc indicates percentage
+            let local_tz = Local {};
+            let start_local = start.with_timezone(&local_tz);
+            let end_local = end.with_timezone(&local_tz);
+            info!("Load shedding from {start_local} to {end_local}");
+            // _wh suffix indices Watt-hours; _soc indicates percentage
             let end_wh = (config.min_soc as f64) * 0.01 * info.capacity;
             let length = duration_hours(end - start);
             // TODO: add in solar here
