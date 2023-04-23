@@ -132,8 +132,9 @@ async fn update_inverter(
             let end_wh = (config.min_soc as f64) * 0.01 * info.capacity;
             let length = duration_hours(end - start);
             // TODO: add in solar here
-            let start_wh = end_wh + config.discharge * length;
-            let now_wh = start_wh - info.charge_rate * duration_hours(start - now);
+            let start_wh = end_wh + config.discharge_power * length;
+            let charge_power = config.charge_power.unwrap_or(info.charge_power);
+            let now_wh = start_wh - charge_power * duration_hours(start - now);
             let now_soc: f64 = now_wh / info.capacity * 100.0;
             max(config.min_soc, round_soc(now_soc))
         }

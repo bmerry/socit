@@ -41,8 +41,8 @@ pub struct Program {
 }
 
 pub struct Info {
-    pub capacity: f64,    // Wh
-    pub charge_rate: f64, // W
+    pub capacity: f64,     // Wh
+    pub charge_power: f64, // W
 }
 
 /// Decode time from a modbus register.
@@ -90,13 +90,13 @@ impl Inverter {
             .read_holding_registers(REG_BATTERY_RESTART_VOLTAGE, 1)
             .await?[0] as f64
             * 0.01;
-        let charge = self
+        let charge_current = self
             .ctx
             .read_holding_registers(REG_GRID_CHARGE_CURRENT, 1)
             .await?[0] as f64;
         Ok(Info {
             capacity: capacity_ah * voltage,
-            charge_rate: charge * voltage,
+            charge_power: charge_current * voltage,
         })
     }
 

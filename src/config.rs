@@ -26,7 +26,9 @@ pub struct InverterConfig {
     // TODO: validation of range
     pub min_soc: u16,
     pub fallback_soc: u16,
-    pub discharge: f64,
+    pub discharge_power: f64,
+    #[serde(default)]
+    pub charge_power: Option<f64>,
     #[serde(default = "dry_run_default")]
     pub dry_run: bool,
 }
