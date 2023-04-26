@@ -116,24 +116,6 @@ impl IndexMut<(usize, usize)> for Matrix {
     }
 }
 
-impl Mul<Matrix> for Matrix {
-    type Output = Matrix;
-
-    fn mul(self, rhs: Matrix) -> Self::Output {
-        let mut out = Self::Output::default();
-        for i in 0..3 {
-            for j in 0..3 {
-                let mut sum = 0.0;
-                for k in 0..3 {
-                    sum += self[(i, k)] * rhs[(k, j)];
-                }
-                out[(i, j)] = sum;
-            }
-        }
-        out
-    }
-}
-
 impl Mul<Vector> for Matrix {
     type Output = Vector;
 
@@ -204,7 +186,7 @@ fn sun_direction<Tz: TimeZone>(lat: f64, lon: f64, time: &DateTime<Tz>) -> Vecto
     let M = wrap_angle(L - ω_bar);
     let E = kepler(M, e);
     let r_orbital = Vector([E.cos() - e, (1.0 - e * e).sqrt() * E.sin(), 0.0]);
-    let r_eq = Rx(-OBLIQUITY) * Rz(-Ω) * Rx(-I) * Rz(-ω) * r_orbital;
+    let r_eq = Rx(-OBLIQUITY) * (Rz(-Ω) * (Rx(-I) * (Rz(-ω) * r_orbital)));
     // Ignore precession-nutation and frame bias. Sign flip is to get Sun
     // relative to Earth instead of vice versa (ignoring the difference between
     // the geocentre and the Earth-Moon barycentre).
