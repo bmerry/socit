@@ -97,30 +97,36 @@ fn target_soc(
     match filter_state(guard, now) {
         None => config.fallback_soc,
         Some(state) => {
+            let step = Duration::seconds(60);
+            let step_h = duration_hours(step);
+            let depth = info.capacity - (config.min_soc as f64) * 0.01 * info.capacity;
+
             let mut base_wh = 0.0;
             let mut worst = 0.0_f64;
+            let mut floor = -depth;
             let mut worst_time = *now;
             /* Project battery level forward for 24 hours, using optimistic
              * assumptions about solar PV and consumption. Whenever the
              * current point falls into load-shedding, check that there will
              * be enough to get to the end with pessimistic assumptions.
              */
-            let step = Duration::seconds(60);
-            let step_h = duration_hours(step);
             let goal = *now + Duration::seconds(86400);
             let mut t = *now;
             for event in state.response.events.iter() {
                 info!("Load-shedding from {} to {}", event.start, event.end);
             }
+            let mut observe = |wh, t| {
+                if wh < worst {
+                    worst = wh;
+                    worst_time = t;
+                }
+            };
             while t < goal {
                 for event in state.response.events.iter() {
                     if t >= event.start && t < event.end {
                         let end_wh =
                             base_wh - config.max_discharge_power * duration_hours(event.end - t);
-                        if end_wh < worst {
-                            worst = end_wh;
-                            worst_time = t;
-                        }
+                        observe(end_wh.max(floor), t);
                     }
                 }
                 let mut power = -config.min_discharge_power;
@@ -137,10 +143,8 @@ fn target_soc(
                 base_wh += power * step_h;
                 t += step;
 
-                if base_wh < worst {
-                    worst = base_wh;
-                    worst_time = t;
-                }
+                floor = floor.max(base_wh - depth);
+                observe(base_wh.max(floor), t);
             }
             info!(
                 "Maximum decrease is {} Wh at {}",
