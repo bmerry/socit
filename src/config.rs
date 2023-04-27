@@ -19,6 +19,16 @@ use std::time::Duration;
 
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
+pub struct PanelConfig {
+    pub latitude: f64,
+    pub longitude: f64,
+    pub tilt: f64,
+    pub azimuth: f64,
+    pub power: f64,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct InverterConfig {
     pub device: String,
     #[serde(default = "id_default")]
@@ -26,11 +36,13 @@ pub struct InverterConfig {
     // TODO: validation of range
     pub min_soc: u16,
     pub fallback_soc: u16,
-    pub discharge_power: f64,
+    pub min_discharge_power: f64,
+    pub max_discharge_power: f64,
     #[serde(default)]
     pub charge_power: Option<f64>,
     #[serde(default = "dry_run_default")]
     pub dry_run: bool,
+    pub panels: Vec<PanelConfig>,
 }
 
 fn id_default() -> u8 {
