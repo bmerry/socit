@@ -1,0 +1,67 @@
+[esp]
+# Sign up for a key at https://eskomsepush.gumroad.com/l/api (free for
+# personal use) and fill in the key here.
+key = "YOUR-ESP-KEY"
+
+# Fill in the API name for your area. You can run a search with the following
+# command on UNIX (replace AREA-NAME and YOUR-ESP-KEY).
+# curl -L https://develop.sepush.co.za/business/2.0/areas_search?text=AREA-NAME --header "token: YOUR-ESP-KEY"
+area = "capetown-11-bergvliet"
+
+# Interval between queries to the EskomSePush API. The free tier allows
+# 50 queries per day, and querying every 40 minutes will use 36 of them,
+# leaving a reasonable number for restarts and ad-hoc queries.
+interval = "40m"
+
+[inverter]
+# The Modbus endpoint for your inverter, as either a host:port for TCP
+# or a device file. Note that a device file cannot be shared, while
+# mbusd can make a single device available to multiple services. For now
+# it's recommended to run socit on the same machine as mbusd, as it does
+# not automatically reconnect if the connection fails.
+device = "127.0.0.1:502"
+# device = "/dev/ttyUSB0"
+
+# Minimum state of charge (%). Socit will try to always keep your battery above
+# this level.
+min_soc = 25
+
+# Minimum state of charge when inactive (%). Socit will set your inverter to
+# keep at least this state of charge when it exits, or when it is unable to get
+# load shedding information. You should set it high enough to get through load
+# shedding without running out of battery.
+fallback_soc = 50
+
+# Minimum load (W), including overhead for the battery itself. Setting this too
+# high may cause your battery to be pre-charged unnecessarily. Setting it too
+# low will cause your battery to spend more time at lower levels of charge.
+min_discharge_power = 100
+
+# Maximum load (W), averaged over a load-shedding interval. This is used to
+# calculate how much battery you need at the start of load-shedding. This
+# means you should not include non-essential loads in this amount.
+max_discharge_power = 400
+
+# Maximum rate at which the battery can charge from the grid (W). If not
+# specified, it is calculated from the inverter settings; however, I've found
+# that this gives an over-estimate.
+charge_power = 1800
+
+# Set to true to prevent actually changing any settings on the inverter
+# (the inverter is still read on startup to determine capacity etc).
+dry_run = false
+
+# Configure the position and orientation of the solar panels. If you have
+# several sets of panels with different orientation, you can use multiple
+# copies of this section.
+[[inverter.panels]]
+# Latitude in degrees (negative south of the equator)
+latitude = -34.000
+# Longitude in degrees (negative west of the Greenwich meridian)
+longitude = 18.000
+# Azimuth in degrees (0 = North, 90 = East, 180 = South, 270 = West)
+azimuth = 300.0
+# Angle at which the panels are tilted, in degrees
+tilt = 18.0
+# Rated power of the panels (W)
+power = 2000.0
