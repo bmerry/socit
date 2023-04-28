@@ -100,7 +100,7 @@ impl Inverter {
         })
     }
 
-    pub async fn set_clock<T: Datelike + Timelike>(&mut self, dt: &T) -> Result<(), Error> {
+    pub async fn set_clock<T: Datelike + Timelike>(&mut self, dt: T) -> Result<(), Error> {
         let data: [u16; 3] = [
             (((dt.year() - 2000) << 8) as u16) | (dt.month() as u16),
             ((dt.day() << 8) as u16) | (dt.hour() as u16),

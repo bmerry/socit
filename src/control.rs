@@ -16,11 +16,12 @@
 
 use chrono::naive::NaiveDateTime;
 use chrono::{DateTime, Duration, DurationRound, Local, TimeZone, Utc};
-use log::{info, warn};
+use log::{error, info, warn};
 use std::io::Error;
 use std::sync::Mutex;
 use std::time::Instant;
 use tokio::time::MissedTickBehavior;
+use tokio_util::sync::CancellationToken;
 
 use crate::config::InverterConfig;
 use crate::esp_api::{AreaResponse, API};
@@ -37,11 +38,15 @@ pub async fn poll_esp(
     area_id: &str,
     interval: std::time::Duration,
     state: &Mutex<Option<State>>,
+    token: CancellationToken,
 ) {
     let mut interval = tokio::time::interval(interval);
     interval.set_missed_tick_behavior(MissedTickBehavior::Delay);
     loop {
-        interval.tick().await;
+        tokio::select! {
+            _ = interval.tick() => {},
+            _ = token.cancelled() => { break; }
+        }
         match api.area(area_id).await {
             Ok(response) => {
                 let mut lock = state.lock().unwrap();
@@ -59,11 +64,11 @@ pub async fn poll_esp(
     }
 }
 
-fn filter_state<'a>(state: &'a Option<State>, now: &DateTime<Utc>) -> Option<&'a State> {
+fn filter_state(state: &Option<State>, now: DateTime<Utc>) -> Option<&State> {
     // TODO: make timeout configurable
     state
         .as_ref()
-        .filter(|state| *now - state.time <= Duration::seconds(4 * 3600))
+        .filter(|state| now - state.time <= Duration::seconds(4 * 3600))
 }
 
 // Number of (non-integer) hours in a duration
@@ -91,7 +96,7 @@ fn target_soc(
     config: &InverterConfig,
     state: &Mutex<Option<State>>,
     info: &Info,
-    now: &DateTime<Utc>,
+    now: DateTime<Utc>,
 ) -> u16 {
     let guard = &state.lock().unwrap();
     match filter_state(guard, now) {
@@ -104,14 +109,14 @@ fn target_soc(
             let mut base_wh = 0.0;
             let mut worst = 0.0_f64;
             let mut floor = -depth;
-            let mut worst_time = *now;
+            let mut worst_time = now;
             /* Project battery level forward for 24 hours, using optimistic
              * assumptions about solar PV and consumption. Whenever the
              * current point falls into load-shedding, check that there will
              * be enough to get to the end with pessimistic assumptions.
              */
-            let goal = *now + Duration::seconds(86400);
-            let mut t = *now;
+            let goal = now + Duration::seconds(86400);
+            let mut t = now;
             for event in state.response.events.iter() {
                 info!("Load-shedding from {} to {}", event.start, event.end);
             }
@@ -157,30 +162,10 @@ fn target_soc(
     }
 }
 
-async fn update_inverter(
-    inverter: &mut Inverter,
-    config: &InverterConfig,
-    state: &Mutex<Option<State>>,
-) -> Result<(), Error> {
-    let now = Utc::now();
-    let now_local = to_local(now);
-    info!("Setting inverter time to {now_local}");
-    if !config.dry_run {
-        inverter.set_clock(&now_local).await?;
-    }
-    let info = inverter.get_info().await?;
-
-    let est_start = Instant::now();
-    let target = target_soc(config, state, &info, &now);
-    info!(
-        "Target SoC is {}, computed in {} s",
-        target,
-        est_start.elapsed().as_secs_f64()
-    );
-
+fn make_programs(target: u16, fallback: u16, now_local: NaiveDateTime) -> Vec<Program> {
     let mut programs = vec![Program::default(); PROGRAM_BLOCKS];
-    // The inverter truncates program times to the nearest 5 minutes. Let target_soc
-    // in a 20-minute window around the current time.
+    // The inverter truncates program times to the nearest 5 minutes.
+    // Set target in a 20-minute window around the current time.
     let step = Duration::seconds(300);
     programs[0].time = (now_local - step * 2).duration_round(step).unwrap().time();
     programs[1].time = (now_local + step * 2).duration_round(step).unwrap().time();
@@ -191,7 +176,7 @@ async fn update_inverter(
     // Set target for the current program, fallback_soc for the rest
     programs[0].soc = target;
     for program in programs[1..PROGRAM_BLOCKS].iter_mut() {
-        program.soc = config.fallback_soc;
+        program.soc = fallback;
     }
     // In some cases the programs will wrap past midnight. Cycle things to keep
     // the start times sorted.
@@ -201,7 +186,31 @@ async fn update_inverter(
             break;
         }
     }
+    programs
+}
 
+async fn update_inverter(
+    inverter: &mut Inverter,
+    config: &InverterConfig,
+    state: &Mutex<Option<State>>,
+) -> Result<(), Error> {
+    let now = Utc::now();
+    let now_local = to_local(now);
+    info!("Setting inverter time to {now_local}");
+    if !config.dry_run {
+        inverter.set_clock(now_local).await?;
+    }
+    let info = inverter.get_info().await?;
+
+    let est_start = Instant::now();
+    let target = target_soc(config, state, &info, now);
+    info!(
+        "Target SoC is {}, computed in {} s",
+        target,
+        est_start.elapsed().as_secs_f64()
+    );
+
+    let programs = make_programs(target, config.fallback_soc, now_local);
     for (i, program) in programs.iter().enumerate() {
         info!(
             "Setting program {} to {}: {}",
@@ -221,13 +230,32 @@ pub async fn control_inverter(
     inverter: &mut Inverter,
     config: &InverterConfig,
     state: &Mutex<Option<State>>,
+    token: CancellationToken,
 ) {
     let mut interval = tokio::time::interval(std::time::Duration::from_secs(60));
     interval.set_missed_tick_behavior(MissedTickBehavior::Delay);
     loop {
-        interval.tick().await;
+        tokio::select! {
+            _ = interval.tick() => {},
+            _ = token.cancelled() => { break; }
+        }
         if let Err(err) = update_inverter(inverter, config, state).await {
             warn!("Failed to update inverter: {err}");
+        }
+    }
+
+    let now_local = to_local(Utc::now());
+    let programs = make_programs(config.fallback_soc, config.fallback_soc, now_local);
+    info!(
+        "Shutting down, setting minimum SoC to {}",
+        config.fallback_soc
+    );
+    if !config.dry_run {
+        match inverter.set_programs(&programs).await {
+            Ok(_) => {}
+            Err(err) => {
+                error!("Failed to set minimum SoC: {err}");
+            }
         }
     }
 }

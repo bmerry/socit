@@ -15,13 +15,13 @@
 
 
 [package]
-name = "espd"
+name = "socit"
 version = "0.1.0"
 edition = "2021"
 authors = ["Bruce Merry"]
 license = "GPL-3.0-or-later"
-description = "Adjust inverter settings based on load-shedding information from EskomSePush API"
-repository = "https://github.com/bmerry/espd"
+description = "Dynamically control inverter SoC settings"
+repository = "https://github.com/bmerry/socit"
 
 [profile.release]
 strip = true
@@ -35,7 +35,8 @@ humantime-serde = "1.1.1"
 log = "0.4.17"
 reqwest = { version = "0.11.16", default-features = false, features = ["json", "rustls-tls", "webpki-roots"] }
 serde = { version = "1.0.159", features = ["derive"] }
-tokio = { version = "1.27.0", features = ["rt", "macros"] }
+tokio = { version = "1.27.0", features = ["rt", "macros", "signal"] }
 tokio-modbus = { version = "0.7.1", default-features = false, features = ["rtu", "tcp"] }
 tokio-serial = "5.4.4"
+tokio-util = { version = "0.7.8", default-features = false }
 toml = { version = "0.7.3", default-features = false, features = ["parse"] }

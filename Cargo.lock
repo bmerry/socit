@@ -218,23 +218,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "espd"
-version = "0.1.0"
-dependencies = [
- "chrono",
- "env_logger",
- "futures",
- "humantime-serde",
- "log",
- "reqwest",
- "serde",
- "tokio",
- "tokio-modbus",
- "tokio-serial",
- "toml",
-]
-
-[[package]]
 name = "fnv"
 version = "1.0.7"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -921,6 +904,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "signal-hook-registry"
+version = "1.4.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "d8229b473baa5980ac72ef434c4415e70c4b5e71b423043adb4ba059f89c99a1"
+dependencies = [
+ "libc",
+]
+
+[[package]]
 name = "slab"
 version = "0.4.8"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -934,6 +926,24 @@ name = "smallvec"
 version = "1.10.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "a507befe795404456341dfab10cef66ead4c041f62b8b11bbb92bffe5d0953e0"
+
+[[package]]
+name = "socit"
+version = "0.1.0"
+dependencies = [
+ "chrono",
+ "env_logger",
+ "futures",
+ "humantime-serde",
+ "log",
+ "reqwest",
+ "serde",
+ "tokio",
+ "tokio-modbus",
+ "tokio-serial",
+ "tokio-util",
+ "toml",
+]
 
 [[package]]
 name = "socket2"
@@ -1025,6 +1035,7 @@ dependencies = [
  "libc",
  "mio",
  "pin-project-lite",
+ "signal-hook-registry",
  "socket2",
  "tokio-macros",
  "windows-sys 0.45.0",
@@ -1083,9 +1094,9 @@ dependencies = [
 
 [[package]]
 name = "tokio-util"
-version = "0.7.7"
+version = "0.7.8"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "5427d89453009325de0d8f342c9490009f76e999cb7672d77e46267448f7e6b2"
+checksum = "806fe8c2c87eccc8b3267cbae29ed3ab2d0bd37fca70ab622e46aaa9375ddb7d"
 dependencies = [
  "bytes",
  "futures-core",
