@@ -14,7 +14,7 @@
  * with this program. If not, see <https://www.gnu.org/licenses/>.
  */
 
-use log::{error, info};
+use log::info;
 use std::sync::Arc;
 use tokio_util::sync::CancellationToken;
 
@@ -22,6 +22,23 @@ use socit::config::Config;
 use socit::control;
 use socit::esp_api::API;
 use socit::inverter::Inverter;
+
+#[cfg(unix)]
+async fn wait_shutdown() -> std::io::Result<()> {
+    use tokio::signal::unix::{signal, SignalKind};
+    let mut sigint = signal(SignalKind::interrupt())?;
+    let mut sigterm = signal(SignalKind::terminate())?;
+    tokio::select! {
+        _ = sigint.recv() => {},
+        _ = sigterm.recv() => {},
+    };
+    Ok(())
+}
+
+#[cfg(not(unix))]
+async fn wait_shutdown() -> std::io::Result<()> {
+    tokio::signal::ctrl_c().await
+}
 
 #[tokio::main(flavor = "current_thread")]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -56,13 +73,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         control::control_inverter(&mut inverter, &config.inverter, &state2, control_token).await;
     });
 
-    match tokio::signal::ctrl_c().await {
-        Ok(_) => {}
-        Err(err) => {
-            error!("Unable to listen for Ctrl-C: {err}");
-        }
-    }
-
+    wait_shutdown().await?;
     token.cancel();
     esp_handle.await?;
     control_handle.await?;
