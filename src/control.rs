@@ -134,7 +134,7 @@ fn target_soc(
                         observe(end_wh.max(floor), t);
                     }
                 }
-                let mut power = -config.min_discharge_power;
+                let mut power = 0.0;
                 for panels in config.panels.iter() {
                     power += panels.power
                         * solar_fraction(
@@ -145,6 +145,10 @@ fn target_soc(
                             &(t + step / 2),
                         );
                 }
+                if let Some(charge_power) = config.charge_power {
+                    power = power.min(charge_power);
+                }
+                power -= config.min_discharge_power;
                 base_wh += power * step_h;
                 t += step;
 
