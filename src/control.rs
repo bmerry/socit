@@ -159,6 +159,8 @@ fn target_soc(
                 "Maximum decrease is {} Wh at {}",
                 -worst,
                 to_local(worst_time)
+                    .duration_round(Duration::seconds(1))
+                    .unwrap()
             );
             let extra = -worst / info.capacity * 100.0;
             round_soc((config.min_soc as f64) + extra)
