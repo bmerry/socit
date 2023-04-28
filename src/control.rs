@@ -25,7 +25,7 @@ use tokio_util::sync::CancellationToken;
 
 use crate::config::InverterConfig;
 use crate::esp_api::{AreaResponse, API};
-use crate::inverter::{Info, Inverter, Program, PROGRAM_BLOCKS};
+use crate::inverter::{Info, Inverter, Program};
 use crate::sun::solar_fraction;
 
 pub struct State {
@@ -168,25 +168,30 @@ fn target_soc(
     }
 }
 
-fn make_programs(target: u16, fallback: u16, now_local: NaiveDateTime) -> Vec<Program> {
-    let mut programs = vec![Program::default(); PROGRAM_BLOCKS];
+fn make_programs(
+    target: u16,
+    fallback: u16,
+    now_local: NaiveDateTime,
+    num_programs: usize,
+) -> Vec<Program> {
+    let mut programs = vec![Program::default(); num_programs];
     // The inverter truncates program times to the nearest 5 minutes.
     // Set target in a 20-minute window around the current time.
     let step = Duration::seconds(300);
     programs[0].time = (now_local - step * 2).duration_round(step).unwrap().time();
     programs[1].time = (now_local + step * 2).duration_round(step).unwrap().time();
     // Fill in the rest with 5-minute intervals
-    for i in 2..PROGRAM_BLOCKS {
+    for i in 2..num_programs {
         programs[i].time = programs[i - 1].time + step;
     }
     // Set target for the current program, fallback_soc for the rest
     programs[0].soc = target;
-    for program in programs[1..PROGRAM_BLOCKS].iter_mut() {
+    for program in programs[1..num_programs].iter_mut() {
         program.soc = fallback;
     }
     // In some cases the programs will wrap past midnight. Cycle things to keep
     // the start times sorted.
-    for i in 1..PROGRAM_BLOCKS {
+    for i in 1..num_programs {
         if programs[i].time < programs[i - 1].time {
             programs.rotate_left(i);
             break;
@@ -196,7 +201,7 @@ fn make_programs(target: u16, fallback: u16, now_local: NaiveDateTime) -> Vec<Pr
 }
 
 async fn update_inverter(
-    inverter: &mut Inverter,
+    inverter: &mut impl Inverter,
     config: &InverterConfig,
     state: &Mutex<Option<State>>,
 ) -> Result<(), Error> {
@@ -204,7 +209,7 @@ async fn update_inverter(
     let now_local = to_local(now);
     info!("Setting inverter time to {now_local}");
     if !config.dry_run {
-        inverter.set_clock(now_local).await?;
+        inverter.set_clock(now).await?;
     }
     let info = inverter.get_info().await?;
 
@@ -216,7 +221,12 @@ async fn update_inverter(
         est_start.elapsed().as_secs_f64()
     );
 
-    let programs = make_programs(target, config.fallback_soc, now_local);
+    let programs = make_programs(
+        target,
+        config.fallback_soc,
+        now_local,
+        inverter.num_programs(),
+    );
     for (i, program) in programs.iter().enumerate() {
         info!(
             "Setting program {} to {}: {}",
@@ -233,7 +243,7 @@ async fn update_inverter(
 }
 
 pub async fn control_inverter(
-    inverter: &mut Inverter,
+    inverter: &mut impl Inverter,
     config: &InverterConfig,
     state: &Mutex<Option<State>>,
     token: CancellationToken,
@@ -251,7 +261,12 @@ pub async fn control_inverter(
     }
 
     let now_local = to_local(Utc::now());
-    let programs = make_programs(config.fallback_soc, config.fallback_soc, now_local);
+    let programs = make_programs(
+        config.fallback_soc,
+        config.fallback_soc,
+        now_local,
+        inverter.num_programs(),
+    );
     info!(
         "Shutting down, setting minimum SoC to {}",
         config.fallback_soc

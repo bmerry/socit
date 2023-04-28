@@ -19,3 +19,4 @@ pub mod control;
 pub mod esp_api;
 pub mod inverter;
 pub mod sun;
+pub mod sunsynk;

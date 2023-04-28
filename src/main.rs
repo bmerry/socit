@@ -22,6 +22,7 @@ use socit::config::Config;
 use socit::control;
 use socit::esp_api::API;
 use socit::inverter::Inverter;
+use socit::sunsynk::SunsynkInverter;
 
 #[cfg(unix)]
 async fn wait_shutdown() -> std::io::Result<()> {
@@ -45,7 +46,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     env_logger::init();
     let config: Config = toml::from_str(&std::fs::read_to_string("socit.toml")?)?;
 
-    let mut inverter = Inverter::new(&config.inverter.device, config.inverter.id).await?;
+    let mut inverter = SunsynkInverter::new(&config.inverter.device, config.inverter.id).await?;
     let programs = inverter.get_programs().await?;
     for (i, program) in programs.iter().enumerate() {
         info!("Program {}: {}: {}", i, program.time, program.soc);
