@@ -25,7 +25,6 @@ use tokio_modbus::slave::Slave;
 use super::inverter::{Info, Inverter, Program};
 
 const REG_CLOCK: u16 = 22;
-const REG_SOC: u16 = 184;
 const REG_BATTERY_CAPACITY_AH: u16 = 204;
 const REG_BATTERY_RESTART_VOLTAGE: u16 = 221;
 const REG_GRID_CHARGE_CURRENT: u16 = 230;
@@ -139,10 +138,6 @@ impl Inverter for SunsynkInverter {
         ];
         self.ctx.write_multiple_registers(REG_CLOCK, &data).await?;
         Ok(())
-    }
-
-    async fn get_soc(&mut self) -> Result<u16, Error> {
-        Ok(self.ctx.read_holding_registers(REG_SOC, 1).await?[0])
     }
 
     async fn get_programs(&mut self) -> Result<Vec<Program>, Error> {

@@ -201,16 +201,14 @@ fn make_programs(
 }
 
 async fn update_inverter(
-    inverter: &mut impl Inverter,
+    inverter: &mut Box<dyn Inverter>,
     config: &InverterConfig,
     state: &Mutex<Option<State>>,
 ) -> Result<(), Error> {
     let now = Utc::now();
     let now_local = to_local(now);
     info!("Setting inverter time to {now_local}");
-    if !config.dry_run {
-        inverter.set_clock(now).await?;
-    }
+    inverter.set_clock(now).await?;
     let info = inverter.get_info().await?;
 
     let est_start = Instant::now();
@@ -235,15 +233,13 @@ async fn update_inverter(
             program.soc
         );
     }
-    if !config.dry_run {
-        inverter.set_programs(&programs).await?;
-    }
+    inverter.set_programs(&programs).await?;
 
     Ok(())
 }
 
 pub async fn control_inverter(
-    inverter: &mut impl Inverter,
+    inverter: &mut Box<dyn Inverter>,
     config: &InverterConfig,
     state: &Mutex<Option<State>>,
     token: CancellationToken,
@@ -271,12 +267,10 @@ pub async fn control_inverter(
         "Shutting down, setting minimum SoC to {}",
         config.fallback_soc
     );
-    if !config.dry_run {
-        match inverter.set_programs(&programs).await {
-            Ok(_) => {}
-            Err(err) => {
-                error!("Failed to set minimum SoC: {err}");
-            }
+    match inverter.set_programs(&programs).await {
+        Ok(_) => {}
+        Err(err) => {
+            error!("Failed to set minimum SoC: {err}");
         }
     }
 }

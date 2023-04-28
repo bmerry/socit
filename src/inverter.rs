@@ -31,11 +31,44 @@ pub struct Info {
 }
 
 #[async_trait]
-pub trait Inverter {
+pub trait Inverter: Send {
     fn num_programs(&self) -> usize;
     async fn get_info(&mut self) -> Result<Info, Error>;
     async fn set_clock(&mut self, dt: DateTime<Utc>) -> Result<(), Error>;
-    async fn get_soc(&mut self) -> Result<u16, Error>;
     async fn get_programs(&mut self) -> Result<Vec<Program>, Error>;
     async fn set_programs(&mut self, programs: &[Program]) -> Result<(), Error>;
+}
+
+/// Wrap another inverter class to turn set methods into nops
+pub struct DryrunInverter<T: Inverter> {
+    base: T,
+}
+
+impl<T: Inverter> DryrunInverter<T> {
+    pub fn new(base: T) -> Self {
+        Self { base }
+    }
+}
+
+#[async_trait]
+impl<T: Inverter> Inverter for DryrunInverter<T> {
+    fn num_programs(&self) -> usize {
+        self.base.num_programs()
+    }
+
+    async fn get_info(&mut self) -> Result<Info, Error> {
+        self.base.get_info().await
+    }
+
+    async fn set_clock(&mut self, _dt: DateTime<Utc>) -> Result<(), Error> {
+        Ok(())
+    }
+
+    async fn get_programs(&mut self) -> Result<Vec<Program>, Error> {
+        self.base.get_programs().await
+    }
+
+    async fn set_programs(&mut self, _programs: &[Program]) -> Result<(), Error> {
+        Ok(())
+    }
 }

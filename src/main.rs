@@ -21,7 +21,7 @@ use tokio_util::sync::CancellationToken;
 use socit::config::Config;
 use socit::control;
 use socit::esp_api::API;
-use socit::inverter::Inverter;
+use socit::inverter::{DryrunInverter, Inverter};
 use socit::sunsynk::SunsynkInverter;
 
 #[cfg(unix)]
@@ -46,7 +46,13 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     env_logger::init();
     let config: Config = toml::from_str(&std::fs::read_to_string("socit.toml")?)?;
 
-    let mut inverter = SunsynkInverter::new(&config.inverter.device, config.inverter.id).await?;
+    let inverter = SunsynkInverter::new(&config.inverter.device, config.inverter.id).await?;
+    let mut inverter: Box<dyn Inverter> = if config.inverter.dry_run {
+        Box::new(DryrunInverter::new(inverter))
+    } else {
+        Box::new(inverter)
+    };
+
     let programs = inverter.get_programs().await?;
     for (i, program) in programs.iter().enumerate() {
         info!("Program {}: {}: {}", i, program.time, program.soc);
