@@ -22,6 +22,9 @@ interval = "40m"
 device = "127.0.0.1:502"
 # device = "/dev/ttyUSB0"
 
+# Set the Modbus SN to use. Defaults to 1.
+# id = 1
+
 # Minimum state of charge (%). Socit will try to always keep your battery above
 # this level.
 min_soc = 25
