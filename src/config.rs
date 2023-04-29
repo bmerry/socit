@@ -42,6 +42,7 @@ pub struct InverterConfig {
     pub charge_power: Option<f64>,
     #[serde(default = "dry_run_default")]
     pub dry_run: bool,
+    #[serde(default)]
     pub panels: Vec<PanelConfig>,
 }
 
