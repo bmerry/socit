@@ -30,6 +30,7 @@ lto = true
 [dependencies]
 async-trait = "0.1.68"
 chrono = { version = "0.4.24", default-features = false, features = ["clock", "serde", "time"] }
+clap = { version = "4.2.5", features = ["derive"] }
 env_logger = "0.10.0"
 futures = { version = "0.3.28", default-features = false }
 humantime-serde = "1.1.1"

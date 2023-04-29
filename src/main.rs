@@ -14,7 +14,9 @@
  * with this program. If not, see <https://www.gnu.org/licenses/>.
  */
 
+use clap::Parser;
 use log::info;
+use std::path::PathBuf;
 use std::sync::Arc;
 use tokio_util::sync::CancellationToken;
 
@@ -23,6 +25,13 @@ use socit::control;
 use socit::esp_api::API;
 use socit::inverter::{DryrunInverter, Inverter};
 use socit::sunsynk::SunsynkInverter;
+
+#[derive(Parser)]
+#[clap(author, version)]
+struct Args {
+    #[clap()]
+    config_file: PathBuf,
+}
 
 #[cfg(unix)]
 async fn wait_shutdown() -> std::io::Result<()> {
@@ -44,7 +53,8 @@ async fn wait_shutdown() -> std::io::Result<()> {
 #[tokio::main(flavor = "current_thread")]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     env_logger::init();
-    let config: Config = toml::from_str(&std::fs::read_to_string("socit.toml")?)?;
+    let args = Args::parse();
+    let config: Config = toml::from_str(&std::fs::read_to_string(args.config_file)?)?;
 
     let inverter = SunsynkInverter::new(&config.inverter.device, config.inverter.id).await?;
     let mut inverter: Box<dyn Inverter> = if config.inverter.dry_run {

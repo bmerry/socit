@@ -28,10 +28,25 @@ also a lot faster.
 
 ## Configuration
 
-Configuration is stored in a [TOML](https://toml.io/) file called
-`socit.toml`. There is an [example](socit.toml.example) in the repository,
-which you can copy to `socit.toml` and edit to provide your configuration. It
-contains detailed instructions on the available settings.
+Configuration is stored in a [TOML](https://toml.io/) file. There is an
+[example](socit.toml.example) in the repository, which you can copy and edit to
+provide your configuration. It contains detailed instructions on the available
+settings.
+
+## Execution
+
+Run the binary (`socit`) and pass the configuration file as the only
+command-line parameter. It uses the
+[env_logger](https://docs.rs/env_logger/latest/env_logger/) crate for logging,
+so you can enable logging by (for example) setting the environment variable
+`RUST_LOG=info`.
+
+## Time synchronisation
+
+You should ensure that the system running socit has its time zone correctly
+set and its clock synchronised e.g. with NTP. Socit periodically updates the
+time on the inverter to match that of the host (so the inverter clock will
+stay in sync even without the official dongle).
 
 ## Algorithm
 
@@ -42,13 +57,6 @@ assumes no solar PV), while the rest of the time it uses optimistic
 assumptions (`min_discharge_power` and estimates solar PV assuming no cloud).
 It then determines a minimum state of charge that the system should have now
 to avoid falling below the `minimum_soc` later (if possible).
-
-## Time synchronisation
-
-You should ensure that the system running socit has its time zone correctly
-set and its clock synchronised e.g. with NTP. Socit periodically updates the
-time on the inverter to match that of the host (so the inverter clock will
-stay in sync even without the official dongle).
 
 ## License
 
