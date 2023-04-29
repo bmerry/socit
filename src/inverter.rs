@@ -15,15 +15,8 @@
  */
 
 use async_trait::async_trait;
-use chrono::naive::NaiveTime;
 use chrono::{DateTime, Utc};
 use std::io::Error;
-
-#[derive(Clone, Default, Eq, PartialEq)]
-pub struct Program {
-    pub time: NaiveTime,
-    pub soc: u16, // %
-}
 
 pub struct Info {
     pub capacity: f64,     // Wh
@@ -32,11 +25,14 @@ pub struct Info {
 
 #[async_trait]
 pub trait Inverter: Send {
-    fn num_programs(&self) -> usize;
     async fn get_info(&mut self) -> Result<Info, Error>;
     async fn set_clock(&mut self, dt: DateTime<Utc>) -> Result<(), Error>;
-    async fn get_programs(&mut self) -> Result<Vec<Program>, Error>;
-    async fn set_programs(&mut self, programs: &[Program]) -> Result<(), Error>;
+    async fn set_min_soc(
+        &mut self,
+        target: f64,
+        fallback: f64,
+        dt: DateTime<Utc>,
+    ) -> Result<(), Error>;
 }
 
 /// Wrap another inverter class to turn set methods into nops
@@ -52,10 +48,6 @@ impl<T: Inverter> DryrunInverter<T> {
 
 #[async_trait]
 impl<T: Inverter> Inverter for DryrunInverter<T> {
-    fn num_programs(&self) -> usize {
-        self.base.num_programs()
-    }
-
     async fn get_info(&mut self) -> Result<Info, Error> {
         self.base.get_info().await
     }
@@ -64,11 +56,12 @@ impl<T: Inverter> Inverter for DryrunInverter<T> {
         Ok(())
     }
 
-    async fn get_programs(&mut self) -> Result<Vec<Program>, Error> {
-        self.base.get_programs().await
-    }
-
-    async fn set_programs(&mut self, _programs: &[Program]) -> Result<(), Error> {
+    async fn set_min_soc(
+        &mut self,
+        _target: f64,
+        _fallback: f64,
+        _dt: DateTime<Utc>,
+    ) -> Result<(), Error> {
         Ok(())
     }
 }

@@ -56,17 +56,17 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let args = Args::parse();
     let config: Config = toml::from_str(&std::fs::read_to_string(args.config_file)?)?;
 
-    let inverter = SunsynkInverter::new(&config.inverter.device, config.inverter.id).await?;
+    let mut inverter = SunsynkInverter::new(&config.inverter.device, config.inverter.id).await?;
+    let programs = inverter.get_programs().await?;
+    for (i, program) in programs.iter().enumerate() {
+        info!("Program {}: {}: {}", i, program.time, program.soc);
+    }
+
     let mut inverter: Box<dyn Inverter> = if config.inverter.dry_run {
         Box::new(DryrunInverter::new(inverter))
     } else {
         Box::new(inverter)
     };
-
-    let programs = inverter.get_programs().await?;
-    for (i, program) in programs.iter().enumerate() {
-        info!("Program {}: {}: {}", i, program.time, program.soc);
-    }
 
     let token = CancellationToken::new();
     let esp_token = token.clone();

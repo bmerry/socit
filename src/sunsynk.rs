@@ -15,15 +15,17 @@
  */
 
 use async_trait::async_trait;
-use chrono::naive::NaiveTime;
-use chrono::{DateTime, Datelike, Local, Timelike, Utc};
-use std::io::{Error, ErrorKind};
+use chrono::naive::{NaiveDateTime, NaiveTime};
+use chrono::{DateTime, Datelike, Duration, DurationRound, Local, Timelike, Utc};
+use log::info;
+use std::io::Error;
 use tokio_modbus::client::Context;
 use tokio_modbus::prelude::{Reader, Writer};
 use tokio_modbus::slave::Slave;
 
-use super::inverter::{Info, Inverter, Program};
+use super::inverter::{Info, Inverter};
 
+const NUM_PROGRAMS: usize = 6;
 const REG_CLOCK: u16 = 22;
 const REG_BATTERY_CAPACITY_AH: u16 = 204;
 const REG_BATTERY_RESTART_VOLTAGE: u16 = 221;
@@ -33,6 +35,12 @@ const REG_PROGRAM_SOC: u16 = 268;
 
 pub struct SunsynkInverter {
     ctx: Context,
+}
+
+#[derive(Clone, Copy, Default, Eq, PartialEq)]
+pub struct Program {
+    pub time: NaiveTime,
+    pub soc: u16, // %
 }
 
 /// Decode time from a modbus register.
@@ -52,9 +60,49 @@ fn encode_time(time: NaiveTime) -> u16 {
     (time.hour() * 100 + time.minute()) as u16
 }
 
-impl SunsynkInverter {
-    const NUM_PROGRAMS: usize = 6;
+/// Convert state of charge to u16 and clamp
+fn round_soc(soc: f64) -> u16 {
+    if soc < 0.0 {
+        0
+    } else if soc >= 100.0 {
+        100
+    } else {
+        // .round() seems to be broken on Raspberry Pi
+        (soc + 0.5) as u16
+    }
+}
 
+/// Construct programs to load
+fn make_programs(target: f64, fallback: f64, now_local: NaiveDateTime) -> [Program; NUM_PROGRAMS] {
+    let target = round_soc(target);
+    let fallback = round_soc(fallback);
+    let mut programs = [Program::default(); NUM_PROGRAMS];
+    // The inverter truncates program times to the nearest 5 minutes.
+    // Set target in a 20-minute window around the current time.
+    let step = Duration::seconds(300);
+    programs[0].time = (now_local - step * 2).duration_round(step).unwrap().time();
+    programs[1].time = (now_local + step * 2).duration_round(step).unwrap().time();
+    // Fill in the rest with 5-minute intervals
+    for i in 2..NUM_PROGRAMS {
+        programs[i].time = programs[i - 1].time + step;
+    }
+    // Set target for the current program, fallback_soc for the rest
+    programs[0].soc = target;
+    for program in programs[1..NUM_PROGRAMS].iter_mut() {
+        program.soc = fallback;
+    }
+    // In some cases the programs will wrap past midnight. Cycle things to keep
+    // the start times sorted.
+    for i in 1..NUM_PROGRAMS {
+        if programs[i].time < programs[i - 1].time {
+            programs.rotate_left(i);
+            break;
+        }
+    }
+    programs
+}
+
+impl SunsynkInverter {
     pub async fn new(device: &str, modbus_id: u8) -> Result<Self, Error> {
         let ctx = match device.parse() {
             Ok(socket_addr) => {
@@ -78,7 +126,7 @@ impl SunsynkInverter {
     ) -> Result<(), Error> {
         let values = self
             .ctx
-            .read_holding_registers(start, Self::NUM_PROGRAMS as u16)
+            .read_holding_registers(start, NUM_PROGRAMS as u16)
             .await?;
         for (program, value) in programs.iter_mut().zip(values) {
             apply(program, value);
@@ -92,21 +140,40 @@ impl SunsynkInverter {
         start: u16,
         get: impl Fn(&Program) -> u16,
     ) -> Result<(), Error> {
-        let mut values = [0u16; Self::NUM_PROGRAMS];
+        let mut values = [0u16; NUM_PROGRAMS];
         for (program, value) in programs.iter().zip(values.iter_mut()) {
             *value = get(program);
         }
         self.ctx.write_multiple_registers(start, &values).await?;
         Ok(())
     }
+
+    pub async fn get_programs(&mut self) -> Result<[Program; NUM_PROGRAMS], Error> {
+        let mut programs = [Program::default(); NUM_PROGRAMS];
+        self.get_program_field(&mut programs, REG_PROGRAM_TIME, |program, x| {
+            program.time = decode_time(x).unwrap_or(NaiveTime::default());
+        })
+        .await?;
+        self.get_program_field(&mut programs, REG_PROGRAM_SOC, |program, x| {
+            program.soc = x;
+        })
+        .await?;
+        Ok(programs)
+    }
+
+    pub async fn set_programs(&mut self, programs: &[Program; NUM_PROGRAMS]) -> Result<(), Error> {
+        self.set_program_field(programs, REG_PROGRAM_TIME, |program| {
+            encode_time(program.time)
+        })
+        .await?;
+        self.set_program_field(programs, REG_PROGRAM_SOC, |program| program.soc)
+            .await?;
+        Ok(())
+    }
 }
 
 #[async_trait]
 impl Inverter for SunsynkInverter {
-    fn num_programs(&self) -> usize {
-        Self::NUM_PROGRAMS
-    }
-
     async fn get_info(&mut self) -> Result<Info, Error> {
         let capacity_ah = self
             .ctx
@@ -140,32 +207,22 @@ impl Inverter for SunsynkInverter {
         Ok(())
     }
 
-    async fn get_programs(&mut self) -> Result<Vec<Program>, Error> {
-        let mut programs = vec![Program::default(); Self::NUM_PROGRAMS];
-        self.get_program_field(&mut programs, REG_PROGRAM_TIME, |program, x| {
-            program.time = decode_time(x).unwrap_or(NaiveTime::default());
-        })
-        .await?;
-        self.get_program_field(&mut programs, REG_PROGRAM_SOC, |program, x| {
-            program.soc = x;
-        })
-        .await?;
-        Ok(programs)
-    }
-
-    async fn set_programs(&mut self, programs: &[Program]) -> Result<(), Error> {
-        if programs.len() != Self::NUM_PROGRAMS {
-            return Err(Error::new(
-                ErrorKind::InvalidInput,
-                "wrong number of programs",
-            ));
+    async fn set_min_soc(
+        &mut self,
+        target: f64,
+        fallback: f64,
+        dt: DateTime<Utc>,
+    ) -> Result<(), Error> {
+        let dt = dt.with_timezone(&Local {}).naive_local();
+        let programs = make_programs(target, fallback, dt);
+        for (i, program) in programs.iter().enumerate() {
+            info!(
+                "Setting program {} to {}: {}",
+                i + 1,
+                program.time,
+                program.soc
+            );
         }
-        self.set_program_field(programs, REG_PROGRAM_TIME, |program| {
-            encode_time(program.time)
-        })
-        .await?;
-        self.set_program_field(programs, REG_PROGRAM_SOC, |program| program.soc)
-            .await?;
-        Ok(())
+        self.set_programs(&programs).await
     }
 }

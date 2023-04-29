@@ -25,7 +25,7 @@ use tokio_util::sync::CancellationToken;
 
 use crate::config::InverterConfig;
 use crate::esp_api::{AreaResponse, API};
-use crate::inverter::{Info, Inverter, Program};
+use crate::inverter::{Info, Inverter};
 use crate::sun::solar_fraction;
 
 pub struct State {
@@ -80,31 +80,19 @@ fn to_local<Tz: TimeZone>(dt: DateTime<Tz>) -> NaiveDateTime {
     dt.with_timezone(&Local {}).naive_local()
 }
 
-// Convert state of charge to u16 and clamp
-fn round_soc(soc: f64) -> u16 {
-    if soc < 0.0 {
-        0
-    } else if soc >= 100.0 {
-        100
-    } else {
-        // .round() seems to be broken on Raspberry Pi
-        (soc + 0.5) as u16
-    }
-}
-
 fn target_soc(
     config: &InverterConfig,
     state: &Mutex<Option<State>>,
     info: &Info,
     now: DateTime<Utc>,
-) -> u16 {
+) -> f64 {
     let guard = &state.lock().unwrap();
     match filter_state(guard, now) {
         None => config.fallback_soc,
         Some(state) => {
             let step = Duration::seconds(60);
             let step_h = duration_hours(step);
-            let depth = info.capacity - (config.min_soc as f64) * 0.01 * info.capacity;
+            let depth = info.capacity - config.min_soc * 0.01 * info.capacity;
 
             let mut base_wh = 0.0;
             let mut worst = 0.0_f64;
@@ -163,41 +151,10 @@ fn target_soc(
                     .unwrap()
             );
             let extra = -worst / info.capacity * 100.0;
-            round_soc((config.min_soc as f64) + extra)
+            let target = config.min_soc + extra;
+            target.max(0.0).min(100.0) // clamp to 0-100
         }
     }
-}
-
-fn make_programs(
-    target: u16,
-    fallback: u16,
-    now_local: NaiveDateTime,
-    num_programs: usize,
-) -> Vec<Program> {
-    let mut programs = vec![Program::default(); num_programs];
-    // The inverter truncates program times to the nearest 5 minutes.
-    // Set target in a 20-minute window around the current time.
-    let step = Duration::seconds(300);
-    programs[0].time = (now_local - step * 2).duration_round(step).unwrap().time();
-    programs[1].time = (now_local + step * 2).duration_round(step).unwrap().time();
-    // Fill in the rest with 5-minute intervals
-    for i in 2..num_programs {
-        programs[i].time = programs[i - 1].time + step;
-    }
-    // Set target for the current program, fallback_soc for the rest
-    programs[0].soc = target;
-    for program in programs[1..num_programs].iter_mut() {
-        program.soc = fallback;
-    }
-    // In some cases the programs will wrap past midnight. Cycle things to keep
-    // the start times sorted.
-    for i in 1..num_programs {
-        if programs[i].time < programs[i - 1].time {
-            programs.rotate_left(i);
-            break;
-        }
-    }
-    programs
 }
 
 async fn update_inverter(
@@ -206,8 +163,7 @@ async fn update_inverter(
     state: &Mutex<Option<State>>,
 ) -> Result<(), Error> {
     let now = Utc::now();
-    let now_local = to_local(now);
-    info!("Setting inverter time to {now_local}");
+    info!("Setting inverter time to {now}");
     inverter.set_clock(now).await?;
     let info = inverter.get_info().await?;
 
@@ -219,22 +175,9 @@ async fn update_inverter(
         est_start.elapsed().as_secs_f64()
     );
 
-    let programs = make_programs(
-        target,
-        config.fallback_soc,
-        now_local,
-        inverter.num_programs(),
-    );
-    for (i, program) in programs.iter().enumerate() {
-        info!(
-            "Setting program {} to {}: {}",
-            i + 1,
-            program.time,
-            program.soc
-        );
-    }
-    inverter.set_programs(&programs).await?;
-
+    inverter
+        .set_min_soc(target, config.fallback_soc, now)
+        .await?;
     Ok(())
 }
 
@@ -256,18 +199,14 @@ pub async fn control_inverter(
         }
     }
 
-    let now_local = to_local(Utc::now());
-    let programs = make_programs(
-        config.fallback_soc,
-        config.fallback_soc,
-        now_local,
-        inverter.num_programs(),
-    );
     info!(
         "Shutting down, setting minimum SoC to {}",
         config.fallback_soc
     );
-    match inverter.set_programs(&programs).await {
+    match inverter
+        .set_min_soc(config.fallback_soc, config.fallback_soc, Utc::now())
+        .await
+    {
         Ok(_) => {}
         Err(err) => {
             error!("Failed to set minimum SoC: {err}");

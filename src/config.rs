@@ -34,8 +34,8 @@ pub struct InverterConfig {
     #[serde(default = "id_default")]
     pub id: u8,
     // TODO: validation of range
-    pub min_soc: u16,
-    pub fallback_soc: u16,
+    pub min_soc: f64,
+    pub fallback_soc: f64,
     pub min_discharge_power: f64,
     pub max_discharge_power: f64,
     #[serde(default)]
