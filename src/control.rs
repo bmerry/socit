@@ -17,6 +17,7 @@
 use chrono::naive::NaiveDateTime;
 use chrono::{DateTime, Duration, DurationRound, Local, TimeZone, Utc};
 use log::{error, info, warn};
+use radians::Deg64;
 use std::io::Error;
 use std::sync::Mutex;
 use std::time::Instant;
@@ -124,10 +125,10 @@ fn target_soc(
                 for panels in config.panels.iter() {
                     power += panels.power
                         * solar_fraction(
-                            panels.latitude.to_radians(),
-                            panels.longitude.to_radians(),
-                            (90.0 - panels.tilt).to_radians(),
-                            panels.azimuth.to_radians(),
+                            Deg64::new(panels.latitude),
+                            Deg64::new(panels.longitude),
+                            Deg64::new(90.0 - panels.tilt),
+                            Deg64::new(panels.azimuth),
                             &(t + step / 2),
                         );
                 }
