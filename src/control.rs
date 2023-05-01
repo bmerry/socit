@@ -64,11 +64,8 @@ pub async fn poll_esp(
     }
 }
 
-fn filter_state(state: &Option<State>, now: DateTime<Utc>) -> Option<&State> {
-    // TODO: make timeout configurable
-    state
-        .as_ref()
-        .filter(|state| now - state.time <= Duration::seconds(4 * 3600))
+fn filter_state(state: &Option<State>, min_time: DateTime<Utc>) -> Option<&State> {
+    state.as_ref().filter(|state| state.time >= min_time)
 }
 
 // Number of (non-integer) hours in a duration
@@ -85,9 +82,10 @@ fn target_soc(
     state: &Mutex<Option<State>>,
     info: &Info,
     now: DateTime<Utc>,
+    esp_timeout: Duration,
 ) -> f64 {
     let guard = &state.lock().unwrap();
-    match filter_state(guard, now) {
+    match filter_state(guard, now - esp_timeout) {
         None => config.fallback_soc,
         Some(state) => {
             let step = Duration::seconds(60);
@@ -161,6 +159,7 @@ async fn update_inverter(
     inverter: &mut Box<dyn Inverter>,
     config: &InverterConfig,
     state: &Mutex<Option<State>>,
+    esp_timeout: Duration,
 ) -> Result<(), Error> {
     let now = Utc::now();
     info!("Setting inverter time to {now}");
@@ -168,7 +167,7 @@ async fn update_inverter(
     let info = inverter.get_info().await?;
 
     let est_start = Instant::now();
-    let target = target_soc(config, state, &info, now);
+    let target = target_soc(config, state, &info, now, esp_timeout);
     info!(
         "Target SoC is {}, computed in {} s",
         target,
@@ -185,6 +184,7 @@ pub async fn control_inverter(
     inverter: &mut Box<dyn Inverter>,
     config: &InverterConfig,
     state: &Mutex<Option<State>>,
+    esp_timeout: Duration,
     token: CancellationToken,
 ) {
     let mut interval = tokio::time::interval(std::time::Duration::from_secs(60));
@@ -194,7 +194,7 @@ pub async fn control_inverter(
             _ = interval.tick() => {},
             _ = token.cancelled() => { break; }
         }
-        if let Err(err) = update_inverter(inverter, config, state).await {
+        if let Err(err) = update_inverter(inverter, config, state, esp_timeout).await {
             warn!("Failed to update inverter: {err}");
         }
     }

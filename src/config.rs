@@ -61,6 +61,18 @@ pub struct EspConfig {
     pub area: String,
     #[serde(default = "interval_default", with = "humantime_serde")]
     pub interval: Duration,
+    #[serde(default = "timeout_default", with = "humantime_serde")]
+    pub timeout: Duration,
+}
+
+fn interval_default() -> Duration {
+    // Default to 40 minutes
+    Duration::from_secs(40 * 60)
+}
+
+fn timeout_default() -> Duration {
+    // Default to 4 hours
+    Duration::from_secs(4 * 60 * 60)
 }
 
 #[derive(Deserialize)]
@@ -68,9 +80,4 @@ pub struct EspConfig {
 pub struct Config {
     pub inverter: InverterConfig,
     pub esp: EspConfig,
-}
-
-fn interval_default() -> Duration {
-    // Default to one hour
-    Duration::from_secs(3600)
 }

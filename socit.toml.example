@@ -11,7 +11,11 @@ area = "capetown-11-bergvliet"
 # Interval between queries to the EskomSePush API. The free tier allows
 # 50 queries per day, and querying every 40 minutes will use 36 of them,
 # leaving a reasonable number for restarts and ad-hoc queries.
-interval = "40m"
+# interval = "40m"
+
+# If no load-shedding information could be obtained for this amount of time,
+# consider it to be stale and switch to `fallback_soc` (see below).
+# timeout = "4h"
 
 [inverter]
 # The Modbus endpoint for your inverter, as either a host:port for TCP

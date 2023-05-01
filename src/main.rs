@@ -55,6 +55,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     env_logger::init();
     let args = Args::parse();
     let config: Config = toml::from_str(&std::fs::read_to_string(args.config_file)?)?;
+    let esp_timeout = chrono::Duration::from_std(config.esp.timeout)?;
 
     let mut inverter = SunsynkInverter::new(&config.inverter.device, config.inverter.id).await?;
     let programs = inverter.get_programs().await?;
@@ -87,7 +88,14 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let control_handle = tokio::spawn(async move {
         // Give poll_esp some time to load the first set of information
         tokio::time::sleep(std::time::Duration::from_secs(5)).await;
-        control::control_inverter(&mut inverter, &config.inverter, &state2, control_token).await;
+        control::control_inverter(
+            &mut inverter,
+            &config.inverter,
+            &state2,
+            esp_timeout,
+            control_token,
+        )
+        .await;
     });
 
     wait_shutdown().await?;
