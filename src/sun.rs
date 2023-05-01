@@ -30,7 +30,7 @@
 //! better than a degree.
 //!
 //! The orbital parameters and the equations for applying them are taken
-//! from https://ssd.jpl.nasa.gov/planets/approx_pos.html, table 2a.
+//! from <https://ssd.jpl.nasa.gov/planets/approx_pos.html>, table 2a.
 
 // Lots of variables from external equations don't have snake case
 #![allow(non_snake_case)]

@@ -14,6 +14,8 @@
  * with this program. If not, see <https://www.gnu.org/licenses/>.
  */
 
+#![doc = include_str!("../README.md")]
+
 pub mod config;
 pub mod control;
 pub mod esp_api;
