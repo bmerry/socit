@@ -17,7 +17,7 @@
 use async_trait::async_trait;
 use chrono::naive::{NaiveDateTime, NaiveTime};
 use chrono::{DateTime, Datelike, Duration, DurationRound, Local, Timelike, Utc};
-use log::info;
+use log::{info, warn};
 use std::io::Error;
 use tokio_modbus::client::Context;
 use tokio_modbus::prelude::{Reader, Writer};
@@ -35,12 +35,48 @@ const REG_PROGRAM_SOC: u16 = 268;
 
 pub struct SunsynkInverter {
     ctx: Context,
+    device: String,
+    modbus_id: u8,
 }
 
 #[derive(Clone, Copy, Default, Eq, PartialEq)]
 pub struct Program {
     pub time: NaiveTime,
     pub soc: u16, // %
+}
+
+#[async_trait]
+trait Retryable {
+    type Output;
+    async fn run(&self, ctx: &mut Context) -> Result<Self::Output, Error>;
+}
+
+struct RetryRead {
+    start: u16,
+    count: u16,
+}
+
+#[async_trait]
+impl Retryable for RetryRead {
+    type Output = Vec<u16>;
+
+    async fn run(&self, ctx: &mut Context) -> Result<Self::Output, Error> {
+        ctx.read_holding_registers(self.start, self.count).await
+    }
+}
+
+struct RetryWrite<'a> {
+    start: u16,
+    values: &'a [u16],
+}
+
+#[async_trait]
+impl<'a> Retryable for RetryWrite<'a> {
+    type Output = ();
+
+    async fn run(&self, ctx: &mut Context) -> Result<Self::Output, Error> {
+        ctx.write_multiple_registers(self.start, self.values).await
+    }
 }
 
 /// Decode time from a modbus register.
@@ -103,19 +139,54 @@ fn make_programs(target: f64, fallback: f64, now_local: NaiveDateTime) -> [Progr
 }
 
 impl SunsynkInverter {
-    pub async fn new(device: &str, modbus_id: u8) -> Result<Self, Error> {
-        let ctx = match device.parse() {
+    async fn connect(device: &str, modbus_id: u8) -> Result<Context, Error> {
+        match device.parse() {
             Ok(socket_addr) => {
-                tokio_modbus::client::tcp::connect_slave(socket_addr, Slave(modbus_id)).await?
+                tokio_modbus::client::tcp::connect_slave(socket_addr, Slave(modbus_id)).await
             }
             Err(_) => {
                 // Not an address. Try it as a device file for serial
                 let serial_builder = tokio_serial::new(device, 9600);
                 let serial_stream = tokio_serial::SerialStream::open(&serial_builder)?;
-                tokio_modbus::client::rtu::connect_slave(serial_stream, Slave(modbus_id)).await?
+                tokio_modbus::client::rtu::connect_slave(serial_stream, Slave(modbus_id)).await
             }
-        };
-        Ok(Self { ctx })
+        }
+    }
+
+    pub async fn new(device: &str, modbus_id: u8) -> Result<Self, Error> {
+        let ctx = Self::connect(device, modbus_id).await?;
+        Ok(Self {
+            ctx,
+            device: device.to_owned(),
+            modbus_id,
+        })
+    }
+
+    async fn robust<F: Retryable>(&mut self, f: F) -> Result<F::Output, Error> {
+        match f.run(&mut self.ctx).await {
+            Ok(ret) => Ok(ret),
+            Err(err) => {
+                warn!("Error accessing inverter ({err}, retrying");
+                self.ctx = Self::connect(&self.device, self.modbus_id).await?;
+                f.run(&mut self.ctx).await
+            }
+        }
+    }
+
+    async fn robust_read_holding_registers(
+        &mut self,
+        start: u16,
+        count: u16,
+    ) -> Result<Vec<u16>, Error> {
+        self.robust(RetryRead { start, count }).await
+    }
+
+    async fn robust_write_multiple_registers(
+        &mut self,
+        start: u16,
+        values: &[u16],
+    ) -> Result<(), Error> {
+        self.robust(RetryWrite { start, values }).await
     }
 
     async fn get_program_field(
@@ -125,8 +196,7 @@ impl SunsynkInverter {
         apply: impl Fn(&mut Program, u16),
     ) -> Result<(), Error> {
         let values = self
-            .ctx
-            .read_holding_registers(start, NUM_PROGRAMS as u16)
+            .robust_read_holding_registers(start, NUM_PROGRAMS as u16)
             .await?;
         for (program, value) in programs.iter_mut().zip(values) {
             apply(program, value);
@@ -144,7 +214,7 @@ impl SunsynkInverter {
         for (program, value) in programs.iter().zip(values.iter_mut()) {
             *value = get(program);
         }
-        self.ctx.write_multiple_registers(start, &values).await?;
+        self.robust_write_multiple_registers(start, &values).await?;
         Ok(())
     }
 
@@ -203,7 +273,8 @@ impl Inverter for SunsynkInverter {
             ((dt.day() << 8) as u16) | (dt.hour() as u16),
             ((dt.minute() << 8) as u16) | (dt.second() as u16),
         ];
-        self.ctx.write_multiple_registers(REG_CLOCK, &data).await?;
+        self.robust_write_multiple_registers(REG_CLOCK, &data)
+            .await?;
         Ok(())
     }
 
