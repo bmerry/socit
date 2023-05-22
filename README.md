@@ -5,6 +5,9 @@ adapt to load shedding and to reduce unnecessary cycling of the battery. It
 integrates with the [EskomSePush API](https://eskomsepush.gumroad.com/l/api)
 to get live information about load shedding in South Africa.
 
+It currently only supports Sunsynk single-phase inverters (Deye inverters too,
+since they're the same thing underneath).
+
 ## Compilation
 
 1. Install Rust e.g. using [these instructions](https://www.rust-lang.org/learn/get-started).
