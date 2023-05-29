@@ -65,3 +65,53 @@ impl<T: Inverter> Inverter for DryrunInverter<T> {
         Ok(())
     }
 }
+
+#[cfg(test)]
+mod test {
+    use super::*;
+    use async_trait::async_trait;
+
+    struct TestInverter {
+        pub clock: DateTime<Utc>,
+        pub target_soc: f64,
+        pub fallback_soc: f64,
+        pub target_time: DateTime<Utc>,
+        pub inject_error: Option<Error>, // Error returned on next call (one-shot)
+    }
+
+    impl TestInverter {
+        fn check_inject_error(&mut self) -> Result<(), Error> {
+            self.inject_error.take().map_or(Ok(()), |err| Err(err))
+        }
+    }
+
+    #[async_trait]
+    impl Inverter for TestInverter {
+        async fn get_info(&mut self) -> Result<Info, Error> {
+            self.check_inject_error()?;
+            Ok(Info {
+                capacity: 5000.0,
+                charge_power: 2000.0,
+            })
+        }
+
+        async fn set_clock(&mut self, dt: DateTime<Utc>) -> Result<(), Error> {
+            self.check_inject_error()?;
+            self.clock = dt;
+            Ok(())
+        }
+
+        async fn set_min_soc(
+            &mut self,
+            target: f64,
+            fallback: f64,
+            dt: DateTime<Utc>,
+        ) -> Result<(), Error> {
+            self.check_inject_error()?;
+            self.target_soc = target;
+            self.fallback_soc = fallback;
+            self.target_time = dt;
+            Ok(())
+        }
+    }
+}
