@@ -26,6 +26,7 @@ pub struct Info {
 #[async_trait]
 pub trait Inverter: Send {
     async fn get_info(&mut self) -> Result<Info, Error>;
+    async fn get_soc(&mut self) -> Result<f64, Error>;
     async fn set_clock(&mut self, dt: DateTime<Utc>) -> Result<(), Error>;
     async fn set_min_soc(
         &mut self,
@@ -52,6 +53,10 @@ impl<T: Inverter> Inverter for DryrunInverter<T> {
         self.base.get_info().await
     }
 
+    async fn get_soc(&mut self) -> Result<f64, Error> {
+        self.base.get_soc().await
+    }
+
     async fn set_clock(&mut self, _dt: DateTime<Utc>) -> Result<(), Error> {
         Ok(())
     }
@@ -76,6 +81,7 @@ mod test {
         pub target_soc: f64,
         pub fallback_soc: f64,
         pub target_time: DateTime<Utc>,
+        pub soc: f64,
         pub inject_error: Option<Error>, // Error returned on next call (one-shot)
     }
 
@@ -93,6 +99,11 @@ mod test {
                 capacity: 5000.0,
                 charge_power: 2000.0,
             })
+        }
+
+        async fn get_soc(&mut self) -> Result<f64, Error> {
+            self.check_inject_error()?;
+            Ok(self.soc)
         }
 
         async fn set_clock(&mut self, dt: DateTime<Utc>) -> Result<(), Error> {

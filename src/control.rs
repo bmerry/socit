@@ -14,8 +14,7 @@
  * with this program. If not, see <https://www.gnu.org/licenses/>.
  */
 
-use chrono::naive::NaiveDateTime;
-use chrono::{DateTime, Duration, DurationRound, Local, TimeZone, Utc};
+use chrono::{DateTime, Duration, Utc};
 use log::{error, info, warn};
 use radians::Deg64;
 use std::io::Error;
@@ -74,84 +73,94 @@ fn duration_hours(duration: Duration) -> f64 {
     (duration.num_milliseconds() as f64) / 3600000.0
 }
 
-fn to_local<Tz: TimeZone>(dt: DateTime<Tz>) -> NaiveDateTime {
-    dt.with_timezone(&Local {}).naive_local()
+fn target_soc_helper(
+    config: &InverterConfig,
+    state: &State,
+    info: &Info,
+    now: DateTime<Utc>,
+    clamp: bool,
+) -> (f64, DateTime<Utc>) {
+    let step = Duration::seconds(60);
+    let step_h = duration_hours(step);
+    let depth = info.capacity - config.min_soc * 0.01 * info.capacity;
+
+    let mut base_wh = 0.0;
+    let mut worst = 0.0_f64;
+    let mut floor = -depth;
+    let mut worst_time = now;
+    /* Project battery level forward for 24 hours, using optimistic
+     * assumptions about solar PV and consumption. Whenever the
+     * current point falls into load-shedding, check that there will
+     * be enough to get to the end with pessimistic assumptions.
+     *
+     * If clamp is true, assume that the battery level will not decline
+     * except during load shedding (maintained with grid power).
+     */
+    let goal = now + Duration::seconds(86400);
+    let mut t = now;
+    let mut observe = |wh, t| {
+        if wh < worst {
+            worst = wh;
+            worst_time = t;
+        }
+    };
+    while t < goal {
+        let mut have_grid = true;
+        for event in state.response.events.iter() {
+            if t >= event.start && t < event.end {
+                have_grid = false;
+                let end_wh = base_wh - config.max_discharge_power * duration_hours(event.end - t);
+                observe(end_wh.max(floor), t);
+            }
+        }
+        let mut power = 0.0;
+        for panels in config.panels.iter() {
+            power += panels.power
+                * solar_fraction(
+                    Deg64::new(panels.latitude),
+                    Deg64::new(panels.longitude),
+                    Deg64::new(90.0 - panels.tilt),
+                    Deg64::new(panels.azimuth),
+                    &(t + step / 2),
+                );
+        }
+        if let Some(charge_power) = config.charge_power {
+            power = power.min(charge_power);
+        }
+        power -= config.min_discharge_power;
+        if clamp && have_grid && power < 0.0 {
+            power = 0.0;
+        }
+        base_wh += power * step_h;
+        t += step;
+
+        floor = floor.max(base_wh - depth);
+        observe(base_wh.max(floor), t);
+    }
+
+    let extra = -worst / info.capacity * 100.0;
+    let target = config.min_soc + extra;
+    let target = target.max(0.0).min(100.0); // clamp to 0-100
+    (target, worst_time)
 }
 
-fn target_soc(
+fn target_socs(
     config: &InverterConfig,
     state: &Mutex<Option<State>>,
     info: &Info,
     now: DateTime<Utc>,
     esp_timeout: Duration,
-) -> f64 {
+) -> (f64, f64) {
     let guard = &state.lock().unwrap();
     match filter_state(guard, now - esp_timeout) {
-        None => config.fallback_soc,
+        None => (config.fallback_soc, config.fallback_soc),
         Some(state) => {
-            let step = Duration::seconds(60);
-            let step_h = duration_hours(step);
-            let depth = info.capacity - config.min_soc * 0.01 * info.capacity;
-
-            let mut base_wh = 0.0;
-            let mut worst = 0.0_f64;
-            let mut floor = -depth;
-            let mut worst_time = now;
-            /* Project battery level forward for 24 hours, using optimistic
-             * assumptions about solar PV and consumption. Whenever the
-             * current point falls into load-shedding, check that there will
-             * be enough to get to the end with pessimistic assumptions.
-             */
-            let goal = now + Duration::seconds(86400);
-            let mut t = now;
             for event in state.response.events.iter() {
                 info!("Load-shedding from {} to {}", event.start, event.end);
             }
-            let mut observe = |wh, t| {
-                if wh < worst {
-                    worst = wh;
-                    worst_time = t;
-                }
-            };
-            while t < goal {
-                for event in state.response.events.iter() {
-                    if t >= event.start && t < event.end {
-                        let end_wh =
-                            base_wh - config.max_discharge_power * duration_hours(event.end - t);
-                        observe(end_wh.max(floor), t);
-                    }
-                }
-                let mut power = 0.0;
-                for panels in config.panels.iter() {
-                    power += panels.power
-                        * solar_fraction(
-                            Deg64::new(panels.latitude),
-                            Deg64::new(panels.longitude),
-                            Deg64::new(90.0 - panels.tilt),
-                            Deg64::new(panels.azimuth),
-                            &(t + step / 2),
-                        );
-                }
-                if let Some(charge_power) = config.charge_power {
-                    power = power.min(charge_power);
-                }
-                power -= config.min_discharge_power;
-                base_wh += power * step_h;
-                t += step;
-
-                floor = floor.max(base_wh - depth);
-                observe(base_wh.max(floor), t);
-            }
-            info!(
-                "Maximum decrease is {} Wh at {}",
-                -worst,
-                to_local(worst_time)
-                    .duration_round(Duration::seconds(1))
-                    .unwrap()
-            );
-            let extra = -worst / info.capacity * 100.0;
-            let target = config.min_soc + extra;
-            target.max(0.0).min(100.0) // clamp to 0-100
+            let (target_high, _) = target_soc_helper(config, state, info, now, false);
+            let (target_low, _) = target_soc_helper(config, state, info, now, true);
+            (target_low, target_high)
         }
     }
 }
@@ -168,13 +177,16 @@ async fn update_inverter(
     let info = inverter.get_info().await?;
 
     let est_start = Instant::now();
-    let target = target_soc(config, state, &info, now, esp_timeout);
+    let (target_low, target_high) = target_socs(config, state, &info, now, esp_timeout);
     info!(
-        "Target SoC is {}, computed in {} s",
-        target,
+        "Target SoC range is {:.2} - {:.2}, computed in {:.3} s",
+        target_low,
+        target_high,
         est_start.elapsed().as_secs_f64()
     );
 
+    let current_soc = inverter.get_soc().await?;
+    let target = current_soc.min(target_high).max(target_low);
     inverter
         .set_min_soc(target, config.fallback_soc, now)
         .await?;

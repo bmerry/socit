@@ -30,6 +30,7 @@ const REG_CLOCK: u16 = 22;
 const REG_BATTERY_CAPACITY_AH: u16 = 204;
 const REG_BATTERY_RESTART_VOLTAGE: u16 = 221;
 const REG_GRID_CHARGE_CURRENT: u16 = 230;
+const REG_SOC: u16 = 244;
 const REG_PROGRAM_TIME: u16 = 250;
 const REG_PROGRAM_SOC: u16 = 268;
 
@@ -246,24 +247,26 @@ impl SunsynkInverter {
 impl Inverter for SunsynkInverter {
     async fn get_info(&mut self) -> Result<Info, Error> {
         let capacity_ah = self
-            .ctx
-            .read_holding_registers(REG_BATTERY_CAPACITY_AH, 1)
+            .robust_read_holding_registers(REG_BATTERY_CAPACITY_AH, 1)
             .await?[0] as f64;
         // There are many voltages (low, restart, equalisation, float... this one seems
         // as good as any.
         let voltage = self
-            .ctx
-            .read_holding_registers(REG_BATTERY_RESTART_VOLTAGE, 1)
+            .robust_read_holding_registers(REG_BATTERY_RESTART_VOLTAGE, 1)
             .await?[0] as f64
             * 0.01;
         let charge_current = self
-            .ctx
-            .read_holding_registers(REG_GRID_CHARGE_CURRENT, 1)
+            .robust_read_holding_registers(REG_GRID_CHARGE_CURRENT, 1)
             .await?[0] as f64;
         Ok(Info {
             capacity: capacity_ah * voltage,
             charge_power: charge_current * voltage,
         })
+    }
+
+    async fn get_soc(&mut self) -> Result<f64, Error> {
+        let soc = self.robust_read_holding_registers(REG_SOC, 1).await?;
+        Ok(soc[0] as f64)
     }
 
     async fn set_clock(&mut self, dt: DateTime<Utc>) -> Result<(), Error> {
