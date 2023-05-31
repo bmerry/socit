@@ -77,7 +77,22 @@ fn timeout_default() -> Duration {
 
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
+pub struct Influxdb2Config {
+    #[serde(default = "default_host")]
+    pub host: String,
+    pub org: String,
+    pub token: String,
+    pub bucket: String,
+}
+
+fn default_host() -> String {
+    "http://localhost:8086".to_string()
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct Config {
     pub inverter: InverterConfig,
     pub esp: EspConfig,
+    pub influxdb2: Option<Influxdb2Config>,
 }

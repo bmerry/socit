@@ -17,15 +17,17 @@
 use chrono::{DateTime, Duration, Utc};
 use log::{error, info, warn};
 use radians::Deg64;
+use std::cmp::min;
 use std::io::Error;
 use std::sync::Mutex;
 use std::time::Instant;
 use tokio::time::MissedTickBehavior;
 use tokio_util::sync::CancellationToken;
 
-use crate::config::InverterConfig;
+use crate::config::{InverterConfig, PanelConfig};
 use crate::esp_api::{AreaResponse, API};
 use crate::inverter::{Info, Inverter};
+use crate::monitoring::{Monitor, Update};
 use crate::sun::solar_fraction;
 
 pub struct State {
@@ -73,6 +75,21 @@ fn duration_hours(duration: Duration) -> f64 {
     (duration.num_milliseconds() as f64) / 3600000.0
 }
 
+fn panels_power(panels: &[PanelConfig], time: DateTime<Utc>) -> f64 {
+    let mut power = 0.0;
+    for panels in panels.iter() {
+        power += panels.power
+            * solar_fraction(
+                Deg64::new(panels.latitude),
+                Deg64::new(panels.longitude),
+                Deg64::new(90.0 - panels.tilt),
+                Deg64::new(panels.azimuth),
+                &time,
+            );
+    }
+    power
+}
+
 fn target_soc_helper(
     config: &InverterConfig,
     state: &State,
@@ -113,17 +130,7 @@ fn target_soc_helper(
                 observe(end_wh.max(floor), t);
             }
         }
-        let mut power = 0.0;
-        for panels in config.panels.iter() {
-            power += panels.power
-                * solar_fraction(
-                    Deg64::new(panels.latitude),
-                    Deg64::new(panels.longitude),
-                    Deg64::new(90.0 - panels.tilt),
-                    Deg64::new(panels.azimuth),
-                    &(t + step / 2),
-                );
-        }
+        let mut power = panels_power(&config.panels, t + step / 2);
         if let Some(charge_power) = config.charge_power {
             power = power.min(charge_power);
         }
@@ -146,13 +153,11 @@ fn target_soc_helper(
 
 fn target_socs(
     config: &InverterConfig,
-    state: &Mutex<Option<State>>,
+    state: Option<&State>,
     info: &Info,
     now: DateTime<Utc>,
-    esp_timeout: Duration,
 ) -> (f64, f64) {
-    let guard = &state.lock().unwrap();
-    match filter_state(guard, now - esp_timeout) {
+    match state {
         None => (config.fallback_soc, config.fallback_soc),
         Some(state) => {
             for event in state.response.events.iter() {
@@ -168,6 +173,7 @@ fn target_socs(
 async fn update_inverter(
     inverter: &mut Box<dyn Inverter>,
     config: &InverterConfig,
+    monitor: &mut dyn Monitor,
     state: &Mutex<Option<State>>,
     esp_timeout: Duration,
 ) -> Result<(), Error> {
@@ -175,27 +181,62 @@ async fn update_inverter(
     info!("Setting inverter time to {now}");
     inverter.set_clock(now).await?;
     let info = inverter.get_info().await?;
-
-    let est_start = Instant::now();
-    let (target_low, target_high) = target_socs(config, state, &info, now, esp_timeout);
-    info!(
-        "Target SoC range is {:.2} - {:.2}, computed in {:.3} s",
-        target_low,
-        target_high,
-        est_start.elapsed().as_secs_f64()
-    );
-
     let current_soc = inverter.get_soc().await?;
-    let target = current_soc.min(target_high).max(target_low);
+    let target;
+    let update;
+
+    {
+        let guard = &state.lock().unwrap();
+        let state = filter_state(guard, now - esp_timeout);
+        let est_start = Instant::now();
+        let (target_soc_low, target_soc_high) = target_socs(config, state, &info, now);
+        info!(
+            "Target SoC range is {:.2} - {:.2}, computed in {:.3} s",
+            target_soc_low,
+            target_soc_high,
+            est_start.elapsed().as_secs_f64()
+        );
+        target = current_soc.min(target_soc_high).max(target_soc_low);
+
+        let mut is_loadshedding = false;
+        let mut next_change = None;
+        if let Some(state) = state {
+            for event in state.response.events.iter() {
+                if now >= event.start && now < event.end {
+                    is_loadshedding = true;
+                    next_change = Some(event.end);
+                    break;
+                } else if now < event.start {
+                    next_change = Some(next_change.map_or(event.start, |t| min(t, event.start)));
+                }
+            }
+        }
+
+        update = Update {
+            time: now,
+            target_soc_low,
+            target_soc_high,
+            current_soc,
+            predicted_pv: panels_power(&config.panels, now),
+            is_loadshedding,
+            next_change,
+        };
+    }
+
     inverter
         .set_min_soc(target, config.fallback_soc, now)
         .await?;
+    if let Err(err) = monitor.update(update).await {
+        warn!("Failed to update monitoring: {err}");
+    }
+
     Ok(())
 }
 
 pub async fn control_inverter(
     inverter: &mut Box<dyn Inverter>,
     config: &InverterConfig,
+    monitor: &mut dyn Monitor,
     state: &Mutex<Option<State>>,
     esp_timeout: Duration,
     token: CancellationToken,
@@ -207,7 +248,7 @@ pub async fn control_inverter(
             _ = interval.tick() => {},
             _ = token.cancelled() => { break; }
         }
-        if let Err(err) = update_inverter(inverter, config, state, esp_timeout).await {
+        if let Err(err) = update_inverter(inverter, config, monitor, state, esp_timeout).await {
             warn!("Failed to update inverter: {err}");
         }
     }

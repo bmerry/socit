@@ -17,13 +17,15 @@
 use clap::Parser;
 use log::info;
 use std::path::PathBuf;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 use tokio_util::sync::CancellationToken;
 
 use socit::config::Config;
 use socit::control;
 use socit::esp_api::API;
+use socit::influxdb2::Influxdb2Monitor;
 use socit::inverter::{DryrunInverter, Inverter};
+use socit::monitoring::{Monitor, NullMonitor};
 use socit::sunsynk::SunsynkInverter;
 
 #[derive(Parser)]
@@ -72,7 +74,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let token = CancellationToken::new();
     let esp_token = token.clone();
     let control_token = token.clone();
-    let state = Arc::new(std::sync::Mutex::new(None));
+    let state = Arc::new(Mutex::new(None));
     let state2 = state.clone();
     let api = API::new(config.esp.key)?;
     let esp_handle = tokio::spawn(async move {
@@ -85,12 +87,17 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         )
         .await;
     });
+    let mut monitor: Box<dyn Monitor> = match &config.influxdb2 {
+        Some(conf) => Box::new(Influxdb2Monitor::new(conf).await),
+        None => Box::new(NullMonitor {}),
+    };
     let control_handle = tokio::spawn(async move {
         // Give poll_esp some time to load the first set of information
         tokio::time::sleep(std::time::Duration::from_secs(5)).await;
         control::control_inverter(
             &mut inverter,
             &config.inverter,
+            &mut *monitor,
             &state2,
             esp_timeout,
             control_token,

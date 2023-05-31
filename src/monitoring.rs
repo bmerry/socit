@@ -14,13 +14,31 @@
  * with this program. If not, see <https://www.gnu.org/licenses/>.
  */
 
-#![doc = include_str!("../README.md")]
+use async_trait::async_trait;
+use chrono::{DateTime, Utc};
+use std::error::Error;
 
-pub mod config;
-pub mod control;
-pub mod esp_api;
-pub mod influxdb2;
-pub mod inverter;
-pub mod monitoring;
-pub mod sun;
-pub mod sunsynk;
+#[derive(Clone, PartialEq, Debug)]
+pub struct Update {
+    pub time: DateTime<Utc>,
+    pub target_soc_low: f64,
+    pub target_soc_high: f64,
+    pub current_soc: f64,
+    pub predicted_pv: f64, // In watts
+    pub is_loadshedding: bool,
+    pub next_change: Option<DateTime<Utc>>,
+}
+
+#[async_trait]
+pub trait Monitor: Send {
+    async fn update(&mut self, update: Update) -> Result<(), Box<dyn Error>>;
+}
+
+pub struct NullMonitor;
+
+#[async_trait]
+impl Monitor for NullMonitor {
+    async fn update(&mut self, _: Update) -> Result<(), Box<dyn Error>> {
+        Ok(())
+    }
+}
