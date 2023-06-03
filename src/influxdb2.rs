@@ -66,7 +66,7 @@ impl Influxdb2Monitor {
 impl Monitor for Influxdb2Monitor {
     async fn update(&mut self, update: Update) -> Result<(), Box<dyn Error>> {
         let point = DataPoint::builder("socit")
-            .timestamp(update.time.timestamp_nanos())
+            .timestamp(update.time.timestamp())
             .field("target_soc_low", update.target_soc_low)
             .field("target_soc_high", update.target_soc_high)
             .field("current_soc", update.current_soc)
