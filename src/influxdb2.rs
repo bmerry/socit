@@ -65,21 +65,20 @@ impl Influxdb2Monitor {
 #[async_trait]
 impl Monitor for Influxdb2Monitor {
     async fn update(&mut self, update: Update) -> Result<(), Box<dyn Error>> {
-        let point = DataPoint::builder("socit")
+        let mut builder = DataPoint::builder("socit")
             .timestamp(update.time.timestamp())
             .field("target_soc_low", update.target_soc_low)
             .field("target_soc_high", update.target_soc_high)
             .field("current_soc", update.current_soc)
             .field("predicted_pv", update.predicted_pv)
-            .field("is_loadshedding", update.is_loadshedding)
-            .field(
+            .field("is_loadshedding", update.is_loadshedding);
+        if let Some(next_change) = update.next_change {
+            builder = builder.field(
                 "next_change_seconds",
-                update.next_change.map_or(f64::INFINITY, |dt| {
-                    (dt - update.time).num_milliseconds() as f64 * 1e-3
-                }),
-            )
-            .build()
-            .unwrap();
+                (next_change - update.time).num_milliseconds() as f64 * 1e-3,
+            );
+        }
+        let point = builder.build().unwrap();
         let strm = futures::stream::once(async { point });
         self.client
             .write_with_precision(&self.bucket, strm, TimestampPrecision::Seconds)
