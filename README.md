@@ -61,6 +61,17 @@ assumptions (`min_discharge_power` and estimates solar PV assuming no cloud).
 It then determines a minimum state of charge that the system should have now
 to avoid falling below the `minimum_soc` later (if possible).
 
+## Changelog
+
+### 0.1.1
+
+Fix example configuration documentation to note that the connection to mbusd
+will be restarted if necessary.
+
+### 0.1.0
+
+First release.
+
 ## License
 
 This program is free software: you can redistribute it and/or modify it

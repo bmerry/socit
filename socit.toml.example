@@ -20,9 +20,7 @@ area = "capetown-11-bergvliet"
 [inverter]
 # The Modbus endpoint for your inverter, as either a host:port for TCP
 # or a device file. Note that a device file cannot be shared, while
-# mbusd can make a single device available to multiple services. For now
-# it's recommended to run socit on the same machine as mbusd, as it does
-# not automatically reconnect if the connection fails.
+# mbusd can make a single device available to multiple services.
 device = "127.0.0.1:502"
 # device = "/dev/ttyUSB0"
 
