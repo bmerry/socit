@@ -1,1 +1,5 @@
 /target
+/misc
+# Some experimental programs
+/src/bin
+.python-version
