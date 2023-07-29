@@ -70,7 +70,7 @@ fn filter_state(state: &Option<State>, min_time: DateTime<Utc>) -> Option<&State
     state.as_ref().filter(|state| state.time >= min_time)
 }
 
-// Number of (non-integer) hours in a duration
+/// Number of (non-integer) hours in a duration
 fn duration_hours(duration: Duration) -> f64 {
     (duration.num_milliseconds() as f64) / 3600000.0
 }
@@ -90,12 +90,22 @@ fn panels_power(panels: &[PanelConfig], time: DateTime<Utc>) -> f64 {
     power
 }
 
+/// What to simulate when no load-shedding and not enough solar
+enum SimMode {
+    /// Power drains from battery
+    Drain,
+    /// Battery level held steady
+    Hold,
+    /// Charge battery as fast as possible
+    Charge,
+}
+
 fn target_soc_helper(
     config: &InverterConfig,
     state: &State,
     info: &Info,
     now: DateTime<Utc>,
-    clamp: bool,
+    mode: SimMode,
 ) -> (f64, DateTime<Utc>) {
     let step = Duration::seconds(60);
     let step_h = duration_hours(step);
@@ -109,9 +119,6 @@ fn target_soc_helper(
      * assumptions about solar PV and consumption. Whenever the
      * current point falls into load-shedding, check that there will
      * be enough to get to the end with pessimistic assumptions.
-     *
-     * If clamp is true, assume that the battery level will not decline
-     * except during load shedding (maintained with grid power).
      */
     let goal = now + Duration::seconds(86400);
     let mut t = now;
@@ -135,8 +142,12 @@ fn target_soc_helper(
             power = power.min(charge_power);
         }
         power -= config.min_discharge_power;
-        if clamp && have_grid && power < 0.0 {
-            power = 0.0;
+        if have_grid {
+            power = match mode {
+                SimMode::Drain => power,
+                SimMode::Hold => power.max(0.0),
+                SimMode::Charge => config.charge_power.unwrap_or(power),
+            };
         }
         base_wh += power * step_h;
         t += step;
@@ -156,16 +167,17 @@ fn target_socs(
     state: Option<&State>,
     info: &Info,
     now: DateTime<Utc>,
-) -> (f64, f64) {
+) -> (f64, f64, f64) {
     match state {
-        None => (config.fallback_soc, config.fallback_soc),
+        None => (config.fallback_soc, config.fallback_soc, config.min_soc),
         Some(state) => {
             for event in state.response.events.iter() {
                 info!("Load-shedding from {} to {}", event.start, event.end);
             }
-            let (target_high, _) = target_soc_helper(config, state, info, now, false);
-            let (target_low, _) = target_soc_helper(config, state, info, now, true);
-            (target_low, target_high)
+            let (target_high, _) = target_soc_helper(config, state, info, now, SimMode::Drain);
+            let (target_low, _) = target_soc_helper(config, state, info, now, SimMode::Hold);
+            let (alarm, _) = target_soc_helper(config, state, info, now, SimMode::Charge);
+            (target_low, target_high, alarm)
         }
     }
 }
@@ -189,11 +201,12 @@ async fn update_inverter(
         let guard = &state.lock().unwrap();
         let state = filter_state(guard, now - esp_timeout);
         let est_start = Instant::now();
-        let (target_soc_low, target_soc_high) = target_socs(config, state, &info, now);
+        let (target_soc_low, target_soc_high, alarm_soc) = target_socs(config, state, &info, now);
         info!(
-            "Target SoC range is {:.2} - {:.2}, computed in {:.3} s",
+            "Target SoC range is {:.2} - {:.2} (alarm at {:.2}), computed in {:.3} s",
             target_soc_low,
             target_soc_high,
+            alarm_soc,
             est_start.elapsed().as_secs_f64()
         );
         target = current_soc.min(target_soc_high).max(target_soc_low);
@@ -216,6 +229,7 @@ async fn update_inverter(
             time: now,
             target_soc_low,
             target_soc_high,
+            alarm_soc,
             current_soc,
             predicted_pv: panels_power(&config.panels, now),
             is_loadshedding,

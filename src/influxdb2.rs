@@ -69,6 +69,7 @@ impl Monitor for Influxdb2Monitor {
             .timestamp(update.time.timestamp())
             .field("target_soc_low", update.target_soc_low)
             .field("target_soc_high", update.target_soc_high)
+            .field("alarm_soc", update.alarm_soc)
             .field("current_soc", update.current_soc)
             .field("predicted_pv", update.predicted_pv)
             .field("is_loadshedding", update.is_loadshedding);

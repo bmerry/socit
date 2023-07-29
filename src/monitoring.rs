@@ -23,6 +23,7 @@ pub struct Update {
     pub time: DateTime<Utc>,
     pub target_soc_low: f64,
     pub target_soc_high: f64,
+    pub alarm_soc: f64,
     pub current_soc: f64,
     pub predicted_pv: f64, // In watts
     pub is_loadshedding: bool,
