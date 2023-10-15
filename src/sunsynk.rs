@@ -35,7 +35,7 @@ const REG_PROGRAM_TIME: u16 = 250;
 const REG_PROGRAM_SOC: u16 = 268;
 
 pub struct SunsynkInverter {
-    ctx: Context,
+    ctx: Option<Context>,
     device: String,
     modbus_id: u8,
 }
@@ -154,22 +154,46 @@ impl SunsynkInverter {
         }
     }
 
-    pub async fn new(device: &str, modbus_id: u8) -> Result<Self, Error> {
-        let ctx = Self::connect(device, modbus_id).await?;
-        Ok(Self {
-            ctx,
+    /// Try to connect, and display a warning on failure
+    async fn connect_warn(device: &str, modbus_id: u8) -> Result<Context, Error> {
+        let ctx = Self::connect(device, modbus_id).await;
+        if let Err(ref err) = ctx {
+            warn!("Error connecting to inverter ({err}), will retry");
+        }
+        ctx
+    }
+
+    pub async fn new(device: &str, modbus_id: u8) -> Self {
+        Self {
+            ctx: Self::connect_warn(device, modbus_id).await.ok(),
             device: device.to_owned(),
             modbus_id,
-        })
+        }
     }
 
     async fn robust<F: Retryable>(&mut self, f: F) -> Result<F::Output, Error> {
-        match f.run(&mut self.ctx).await {
+        let ctx: &mut Context = match self.ctx.as_mut() {
+            Some(value) => value,
+            None => match Self::connect_warn(&self.device, self.modbus_id).await {
+                Ok(value) => {
+                    self.ctx = Some(value);
+                    self.ctx.as_mut().unwrap()
+                }
+                Err(err) => {
+                    return Err(err);
+                }
+            },
+        };
+        match f.run(ctx).await {
             Ok(ret) => Ok(ret),
             Err(err) => {
-                warn!("Error accessing inverter ({err}, retrying");
-                self.ctx = Self::connect(&self.device, self.modbus_id).await?;
-                f.run(&mut self.ctx).await
+                warn!("Error accessing inverter ({err}), reconnecting");
+                self.ctx = Self::connect_warn(&self.device, self.modbus_id).await.ok();
+                if let Some(ctx2) = self.ctx.as_mut() {
+                    f.run(ctx2).await
+                } else {
+                    Err(err)
+                }
             }
         }
     }
