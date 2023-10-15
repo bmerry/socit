@@ -222,7 +222,7 @@ impl SunsynkInverter {
     pub async fn get_programs(&mut self) -> Result<[Program; NUM_PROGRAMS], Error> {
         let mut programs = [Program::default(); NUM_PROGRAMS];
         self.get_program_field(&mut programs, REG_PROGRAM_TIME, |program, x| {
-            program.time = decode_time(x).unwrap_or(NaiveTime::default());
+            program.time = decode_time(x).unwrap_or_default();
         })
         .await?;
         self.get_program_field(&mut programs, REG_PROGRAM_SOC, |program, x| {
