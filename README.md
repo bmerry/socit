@@ -71,6 +71,12 @@ is a risk of falling below `minimum_soc`.
 
 ## Changelog
 
+### 0.2.0
+
+- Add `alarm_soc`
+- Make the startup robust, so that if the modbus connection could not
+  immediately be established, socit will keep running and repeatly retry.
+
 ### 0.1.1
 
 Fix example configuration documentation to note that the connection to mbusd
