@@ -61,6 +61,14 @@ assumptions (`min_discharge_power` and estimates solar PV assuming no cloud).
 It then determines a minimum state of charge that the system should have now
 to avoid falling below the `minimum_soc` later (if possible).
 
+There are three SoC levels calculated. When above `target_soc_high`, no grid
+power is needed. Between `target_soc_low` and `target_soc_high`, grid power
+is used for the load, but the battery is not changed, while below
+`target_soc_low`, the battery is charged as well. Finally, the value
+`alarm_soc` has no internal effect, but in stored in the database can be used
+by external alerting tools: if the actual SoC is below `alarm_soc`, then there
+is a risk of falling below `minimum_soc`.
+
 ## Changelog
 
 ### 0.1.1
