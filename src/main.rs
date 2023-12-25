@@ -59,7 +59,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let config: Config = toml::from_str(&std::fs::read_to_string(args.config_file)?)?;
     let esp_timeout = chrono::Duration::from_std(config.esp.timeout)?;
 
-    let mut inverter = SunsynkInverter::new(&config.inverter.device, config.inverter.id).await;
+    let mut inverter = SunsynkInverter::new(&config.inverter.device, config.inverter.id);
     if let Ok(programs) = inverter.get_programs().await {
         for (i, program) in programs.iter().enumerate() {
             info!("Program {}: {}: {}", i, program.time, program.soc);

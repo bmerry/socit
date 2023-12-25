@@ -17,7 +17,7 @@
 use async_trait::async_trait;
 use chrono::naive::{NaiveDateTime, NaiveTime};
 use chrono::{DateTime, Datelike, Duration, DurationRound, Local, Timelike, Utc};
-use log::{info, warn};
+use log::info;
 use std::io::Error;
 use tokio_modbus::client::Context;
 use tokio_modbus::prelude::{Reader, Writer};
@@ -35,49 +35,13 @@ const REG_PROGRAM_TIME: u16 = 250;
 const REG_PROGRAM_SOC: u16 = 268;
 
 pub struct SunsynkInverter {
-    ctx: Option<Context>,
-    device: String,
-    modbus_id: u8,
+    ctx: Context,
 }
 
 #[derive(Clone, Copy, Default, Eq, PartialEq)]
 pub struct Program {
     pub time: NaiveTime,
     pub soc: u16, // %
-}
-
-#[async_trait]
-trait Retryable {
-    type Output;
-    async fn run(&self, ctx: &mut Context) -> Result<Self::Output, Error>;
-}
-
-struct RetryRead {
-    start: u16,
-    count: u16,
-}
-
-#[async_trait]
-impl Retryable for RetryRead {
-    type Output = Vec<u16>;
-
-    async fn run(&self, ctx: &mut Context) -> Result<Self::Output, Error> {
-        ctx.read_holding_registers(self.start, self.count).await
-    }
-}
-
-struct RetryWrite<'a> {
-    start: u16,
-    values: &'a [u16],
-}
-
-#[async_trait]
-impl<'a> Retryable for RetryWrite<'a> {
-    type Output = ();
-
-    async fn run(&self, ctx: &mut Context) -> Result<Self::Output, Error> {
-        ctx.write_multiple_registers(self.start, self.values).await
-    }
 }
 
 /// Decode time from a modbus register.
@@ -140,78 +104,21 @@ fn make_programs(target: f64, fallback: f64, now_local: NaiveDateTime) -> [Progr
 }
 
 impl SunsynkInverter {
-    async fn connect(device: &str, modbus_id: u8) -> Result<Context, Error> {
+    fn connect(device: &str, modbus_id: u8) -> Context {
+        let slave = Slave(modbus_id);
         match device.parse() {
-            Ok(socket_addr) => {
-                tokio_modbus::client::tcp::connect_slave(socket_addr, Slave(modbus_id)).await
-            }
+            Ok(socket_addr) => modbus_robust::new_tcp_slave(socket_addr, slave),
             Err(_) => {
                 // Not an address. Try it as a device file for serial
-                let serial_builder = tokio_serial::new(device, 9600);
-                let serial_stream = tokio_serial::SerialStream::open(&serial_builder)?;
-                tokio_modbus::client::rtu::connect_slave(serial_stream, Slave(modbus_id)).await
+                modbus_robust::new_rtu_slave(device, 9600, slave)
             }
         }
     }
 
-    /// Try to connect, and display a warning on failure
-    async fn connect_warn(device: &str, modbus_id: u8) -> Result<Context, Error> {
-        let ctx = Self::connect(device, modbus_id).await;
-        if let Err(ref err) = ctx {
-            warn!("Error connecting to inverter ({err}), will retry");
-        }
-        ctx
-    }
-
-    pub async fn new(device: &str, modbus_id: u8) -> Self {
+    pub fn new(device: &str, modbus_id: u8) -> Self {
         Self {
-            ctx: Self::connect_warn(device, modbus_id).await.ok(),
-            device: device.to_owned(),
-            modbus_id,
+            ctx: Self::connect(device, modbus_id),
         }
-    }
-
-    async fn robust<F: Retryable>(&mut self, f: F) -> Result<F::Output, Error> {
-        let ctx: &mut Context = match self.ctx.as_mut() {
-            Some(value) => value,
-            None => match Self::connect_warn(&self.device, self.modbus_id).await {
-                Ok(value) => {
-                    self.ctx = Some(value);
-                    self.ctx.as_mut().unwrap()
-                }
-                Err(err) => {
-                    return Err(err);
-                }
-            },
-        };
-        match f.run(ctx).await {
-            Ok(ret) => Ok(ret),
-            Err(err) => {
-                warn!("Error accessing inverter ({err}), reconnecting");
-                self.ctx = Self::connect_warn(&self.device, self.modbus_id).await.ok();
-                if let Some(ctx2) = self.ctx.as_mut() {
-                    f.run(ctx2).await
-                } else {
-                    Err(err)
-                }
-            }
-        }
-    }
-
-    async fn robust_read_holding_registers(
-        &mut self,
-        start: u16,
-        count: u16,
-    ) -> Result<Vec<u16>, Error> {
-        self.robust(RetryRead { start, count }).await
-    }
-
-    async fn robust_write_multiple_registers(
-        &mut self,
-        start: u16,
-        values: &[u16],
-    ) -> Result<(), Error> {
-        self.robust(RetryWrite { start, values }).await
     }
 
     async fn get_program_field(
@@ -221,7 +128,8 @@ impl SunsynkInverter {
         apply: impl Fn(&mut Program, u16),
     ) -> Result<(), Error> {
         let values = self
-            .robust_read_holding_registers(start, NUM_PROGRAMS as u16)
+            .ctx
+            .read_holding_registers(start, NUM_PROGRAMS as u16)
             .await?;
         for (program, value) in programs.iter_mut().zip(values) {
             apply(program, value);
@@ -239,7 +147,7 @@ impl SunsynkInverter {
         for (program, value) in programs.iter().zip(values.iter_mut()) {
             *value = get(program);
         }
-        self.robust_write_multiple_registers(start, &values).await?;
+        self.ctx.write_multiple_registers(start, &values).await?;
         Ok(())
     }
 
@@ -271,16 +179,19 @@ impl SunsynkInverter {
 impl Inverter for SunsynkInverter {
     async fn get_info(&mut self) -> Result<Info, Error> {
         let capacity_ah = self
-            .robust_read_holding_registers(REG_BATTERY_CAPACITY_AH, 1)
+            .ctx
+            .read_holding_registers(REG_BATTERY_CAPACITY_AH, 1)
             .await?[0] as f64;
         // There are many voltages (low, restart, equalisation, float... this one seems
         // as good as any.
         let voltage = self
-            .robust_read_holding_registers(REG_BATTERY_RESTART_VOLTAGE, 1)
+            .ctx
+            .read_holding_registers(REG_BATTERY_RESTART_VOLTAGE, 1)
             .await?[0] as f64
             * 0.01;
         let charge_current = self
-            .robust_read_holding_registers(REG_GRID_CHARGE_CURRENT, 1)
+            .ctx
+            .read_holding_registers(REG_GRID_CHARGE_CURRENT, 1)
             .await?[0] as f64;
         Ok(Info {
             capacity: capacity_ah * voltage,
@@ -289,7 +200,7 @@ impl Inverter for SunsynkInverter {
     }
 
     async fn get_soc(&mut self) -> Result<f64, Error> {
-        let soc = self.robust_read_holding_registers(REG_SOC, 1).await?;
+        let soc = self.ctx.read_holding_registers(REG_SOC, 1).await?;
         Ok(soc[0] as f64)
     }
 
@@ -300,8 +211,7 @@ impl Inverter for SunsynkInverter {
             ((dt.day() << 8) as u16) | (dt.hour() as u16),
             ((dt.minute() << 8) as u16) | (dt.second() as u16),
         ];
-        self.robust_write_multiple_registers(REG_CLOCK, &data)
-            .await?;
+        self.ctx.write_multiple_registers(REG_CLOCK, &data).await?;
         Ok(())
     }
 
