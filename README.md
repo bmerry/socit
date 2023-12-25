@@ -71,6 +71,10 @@ is a risk of falling below `minimum_soc`.
 
 ## Changelog
 
+### 0.2.1
+
+- Refactor the robust modbus access into a separate crate (modbus-robust).
+
 ### 0.2.0
 
 - Add `alarm_soc`
