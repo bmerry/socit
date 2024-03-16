@@ -15,10 +15,10 @@
  */
 
 use async_trait::async_trait;
-use chrono::naive::{NaiveDateTime, NaiveTime};
-use chrono::{DateTime, Datelike, Duration, DurationRound, Local, Timelike, Utc};
+use chrono::naive::{NaiveDate, NaiveDateTime, NaiveTime};
+use chrono::{Duration, DurationRound, Timelike};
 use log::info;
-use std::io::Error;
+use std::io::{Error, ErrorKind};
 use tokio_modbus::client::Context;
 use tokio_modbus::prelude::{Reader, Writer};
 use tokio_modbus::slave::Slave;
@@ -173,6 +173,19 @@ impl SunsynkInverter {
             .await?;
         Ok(())
     }
+
+    pub async fn get_clock(&mut self) -> Result<NaiveDateTime, Error> {
+        let data = self.ctx.read_holding_registers(REG_CLOCK, 3).await?;
+        let year = 2000 + (data[0] >> 8) as i32;
+        let month = (data[0] & 0xff) as u32;
+        let day = (data[1] >> 8) as u32;
+        let hour = (data[1] & 0xff) as u32;
+        let minute = (data[2] >> 8) as u32;
+        let second = (data[2] & 0xff) as u32;
+        NaiveDate::from_ymd_opt(year, month, day)
+            .and_then(|x| x.and_hms_opt(hour, minute, second))
+            .ok_or_else(|| Error::from(ErrorKind::InvalidData))
+    }
 }
 
 #[async_trait]
@@ -204,24 +217,8 @@ impl Inverter for SunsynkInverter {
         Ok(soc[0] as f64)
     }
 
-    async fn set_clock(&mut self, dt: DateTime<Utc>) -> Result<(), Error> {
-        let dt = dt.with_timezone(&Local {}).naive_local();
-        let data: [u16; 3] = [
-            (((dt.year() - 2000) << 8) as u16) | (dt.month() as u16),
-            ((dt.day() << 8) as u16) | (dt.hour() as u16),
-            ((dt.minute() << 8) as u16) | (dt.second() as u16),
-        ];
-        self.ctx.write_multiple_registers(REG_CLOCK, &data).await?;
-        Ok(())
-    }
-
-    async fn set_min_soc(
-        &mut self,
-        target: f64,
-        fallback: f64,
-        dt: DateTime<Utc>,
-    ) -> Result<(), Error> {
-        let dt = dt.with_timezone(&Local {}).naive_local();
+    async fn set_min_soc(&mut self, target: f64, fallback: f64) -> Result<(), Error> {
+        let dt = self.get_clock().await?;
         let programs = make_programs(target, fallback, dt);
         for (i, program) in programs.iter().enumerate() {
             info!(

@@ -15,7 +15,6 @@
  */
 
 use async_trait::async_trait;
-use chrono::{DateTime, Utc};
 use std::io::Error;
 
 pub struct Info {
@@ -27,13 +26,7 @@ pub struct Info {
 pub trait Inverter: Send {
     async fn get_info(&mut self) -> Result<Info, Error>;
     async fn get_soc(&mut self) -> Result<f64, Error>;
-    async fn set_clock(&mut self, dt: DateTime<Utc>) -> Result<(), Error>;
-    async fn set_min_soc(
-        &mut self,
-        target: f64,
-        fallback: f64,
-        dt: DateTime<Utc>,
-    ) -> Result<(), Error>;
+    async fn set_min_soc(&mut self, target: f64, fallback: f64) -> Result<(), Error>;
 }
 
 /// Wrap another inverter class to turn set methods into nops
@@ -57,16 +50,7 @@ impl<T: Inverter> Inverter for DryrunInverter<T> {
         self.base.get_soc().await
     }
 
-    async fn set_clock(&mut self, _dt: DateTime<Utc>) -> Result<(), Error> {
-        Ok(())
-    }
-
-    async fn set_min_soc(
-        &mut self,
-        _target: f64,
-        _fallback: f64,
-        _dt: DateTime<Utc>,
-    ) -> Result<(), Error> {
+    async fn set_min_soc(&mut self, _target: f64, _fallback: f64) -> Result<(), Error> {
         Ok(())
     }
 }
@@ -80,7 +64,6 @@ mod test {
         pub clock: DateTime<Utc>,
         pub target_soc: f64,
         pub fallback_soc: f64,
-        pub target_time: DateTime<Utc>,
         pub soc: f64,
         pub inject_error: Option<Error>, // Error returned on next call (one-shot)
     }
@@ -112,16 +95,10 @@ mod test {
             Ok(())
         }
 
-        async fn set_min_soc(
-            &mut self,
-            target: f64,
-            fallback: f64,
-            dt: DateTime<Utc>,
-        ) -> Result<(), Error> {
+        async fn set_min_soc(&mut self, target: f64, fallback: f64) -> Result<(), Error> {
             self.check_inject_error()?;
             self.target_soc = target;
             self.fallback_soc = fallback;
-            self.target_time = dt;
             Ok(())
         }
     }

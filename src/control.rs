@@ -190,8 +190,6 @@ async fn update_inverter(
     esp_timeout: Duration,
 ) -> Result<(), Error> {
     let now = Utc::now();
-    info!("Setting inverter time to {now}");
-    inverter.set_clock(now).await?;
     let info = inverter.get_info().await?;
     let current_soc = inverter.get_soc().await?;
     let target;
@@ -237,9 +235,7 @@ async fn update_inverter(
         };
     }
 
-    inverter
-        .set_min_soc(target, config.fallback_soc, now)
-        .await?;
+    inverter.set_min_soc(target, config.fallback_soc).await?;
     if let Err(err) = monitor.update(update).await {
         warn!("Failed to update monitoring: {err}");
     }
@@ -272,7 +268,7 @@ pub async fn control_inverter(
         config.fallback_soc
     );
     match inverter
-        .set_min_soc(config.fallback_soc, config.fallback_soc, Utc::now())
+        .set_min_soc(config.fallback_soc, config.fallback_soc)
         .await
     {
         Ok(_) => {}
