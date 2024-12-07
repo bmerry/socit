@@ -1,4 +1,4 @@
-/* Copyright 2023 Bruce Merry
+/* Copyright 2023-2024 Bruce Merry
  *
  * This program is free software: you can redistribute it and/or modify it
  * under the terms of the GNU General Public License as published by the Free
@@ -158,7 +158,7 @@ fn target_soc_helper(
 
     let extra = -worst / info.capacity * 100.0;
     let target = config.min_soc + extra;
-    let target = target.max(0.0).min(100.0); // clamp to 0-100
+    let target = target.clamp(0.0, 100.0);
     (target, worst_time)
 }
 
