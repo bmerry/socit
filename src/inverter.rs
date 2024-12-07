@@ -1,4 +1,4 @@
-/* Copyright 2023 Bruce Merry
+/* Copyright 2023-2024 Bruce Merry
  *
  * This program is free software: you can redistribute it and/or modify it
  * under the terms of the GNU General Public License as published by the Free
@@ -15,7 +15,7 @@
  */
 
 use async_trait::async_trait;
-use std::io::Error;
+use std::error::Error;
 
 pub struct Info {
     pub capacity: f64,     // Wh
@@ -24,9 +24,9 @@ pub struct Info {
 
 #[async_trait]
 pub trait Inverter: Send {
-    async fn get_info(&mut self) -> Result<Info, Error>;
-    async fn get_soc(&mut self) -> Result<f64, Error>;
-    async fn set_min_soc(&mut self, target: f64, fallback: f64) -> Result<(), Error>;
+    async fn get_info(&mut self) -> Result<Info, Box<dyn Error>>;
+    async fn get_soc(&mut self) -> Result<f64, Box<dyn Error>>;
+    async fn set_min_soc(&mut self, target: f64, fallback: f64) -> Result<(), Box<dyn Error>>;
 }
 
 /// Wrap another inverter class to turn set methods into nops
@@ -42,15 +42,15 @@ impl<T: Inverter> DryrunInverter<T> {
 
 #[async_trait]
 impl<T: Inverter> Inverter for DryrunInverter<T> {
-    async fn get_info(&mut self) -> Result<Info, Error> {
+    async fn get_info(&mut self) -> Result<Info, Box<dyn Error>> {
         self.base.get_info().await
     }
 
-    async fn get_soc(&mut self) -> Result<f64, Error> {
+    async fn get_soc(&mut self) -> Result<f64, Box<dyn Error>> {
         self.base.get_soc().await
     }
 
-    async fn set_min_soc(&mut self, _target: f64, _fallback: f64) -> Result<(), Error> {
+    async fn set_min_soc(&mut self, _target: f64, _fallback: f64) -> Result<(), Box<dyn Error>> {
         Ok(())
     }
 }
@@ -65,18 +65,18 @@ mod test {
         pub target_soc: f64,
         pub fallback_soc: f64,
         pub soc: f64,
-        pub inject_error: Option<Error>, // Error returned on next call (one-shot)
+        pub inject_error: Option<Box<dyn Error>>, // Error returned on next call (one-shot)
     }
 
     impl TestInverter {
-        fn check_inject_error(&mut self) -> Result<(), Error> {
+        fn check_inject_error(&mut self) -> Result<(), Box<dyn Error>> {
             self.inject_error.take().map_or(Ok(()), |err| Err(err))
         }
     }
 
     #[async_trait]
     impl Inverter for TestInverter {
-        async fn get_info(&mut self) -> Result<Info, Error> {
+        async fn get_info(&mut self) -> Result<Info, Box<dyn Error>> {
             self.check_inject_error()?;
             Ok(Info {
                 capacity: 5000.0,
@@ -84,18 +84,18 @@ mod test {
             })
         }
 
-        async fn get_soc(&mut self) -> Result<f64, Error> {
+        async fn get_soc(&mut self) -> Result<f64, Box<dyn Error>> {
             self.check_inject_error()?;
             Ok(self.soc)
         }
 
-        async fn set_clock(&mut self, dt: DateTime<Utc>) -> Result<(), Error> {
+        async fn set_clock(&mut self, dt: DateTime<Utc>) -> Result<(), Box<dyn Error>> {
             self.check_inject_error()?;
             self.clock = dt;
             Ok(())
         }
 
-        async fn set_min_soc(&mut self, target: f64, fallback: f64) -> Result<(), Error> {
+        async fn set_min_soc(&mut self, target: f64, fallback: f64) -> Result<(), Box<dyn Error>> {
             self.check_inject_error()?;
             self.target_soc = target;
             self.fallback_soc = fallback;

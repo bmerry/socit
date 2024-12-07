@@ -36,12 +36,12 @@ futures = { version = "0.3.28", default-features = false }
 humantime-serde = "1.1.1"
 influxdb2 = { version = "0.5.2", default-features = false, features = ["rustls"] }
 log = "0.4.17"
-modbus-robust = { version = "0.1.0" }
+modbus-robust = { version = "0.2.0" }
 radians = "0.3.1"
 reqwest = { version = "0.12.9", default-features = false, features = ["json", "rustls-tls-webpki-roots"] }
 serde = { version = "1.0.159", features = ["derive"] }
 tokio = { version = "1.27.0", features = ["rt", "macros", "signal"] }
-tokio-modbus = { version = "0.9.0", default-features = false, features = ["rtu", "tcp"] }
+tokio-modbus = { version = "0.16.0", default-features = false, features = ["rtu", "tcp"] }
 tokio-serial = "5.4.4"
 tokio-util = { version = "0.7.8", default-features = false }
 toml = { version = "0.8.19", default-features = false, features = ["parse"] }

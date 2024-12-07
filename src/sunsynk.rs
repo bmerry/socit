@@ -1,4 +1,4 @@
-/* Copyright 2023 Bruce Merry
+/* Copyright 2023-2024 Bruce Merry
  *
  * This program is free software: you can redistribute it and/or modify it
  * under the terms of the GNU General Public License as published by the Free
@@ -18,7 +18,8 @@ use async_trait::async_trait;
 use chrono::naive::{NaiveDate, NaiveDateTime, NaiveTime};
 use chrono::{Duration, DurationRound, Timelike};
 use log::info;
-use std::io::{Error, ErrorKind};
+use std::error::Error;
+use std::io::ErrorKind;
 use tokio_modbus::client::Context;
 use tokio_modbus::prelude::{Reader, Writer};
 use tokio_modbus::slave::Slave;
@@ -126,11 +127,11 @@ impl SunsynkInverter {
         programs: &mut [Program],
         start: u16,
         apply: impl Fn(&mut Program, u16),
-    ) -> Result<(), Error> {
+    ) -> Result<(), Box<dyn Error>> {
         let values = self
             .ctx
             .read_holding_registers(start, NUM_PROGRAMS as u16)
-            .await?;
+            .await??;
         for (program, value) in programs.iter_mut().zip(values) {
             apply(program, value);
         }
@@ -142,16 +143,16 @@ impl SunsynkInverter {
         programs: &[Program],
         start: u16,
         get: impl Fn(&Program) -> u16,
-    ) -> Result<(), Error> {
+    ) -> Result<(), Box<dyn Error>> {
         let mut values = [0u16; NUM_PROGRAMS];
         for (program, value) in programs.iter().zip(values.iter_mut()) {
             *value = get(program);
         }
-        self.ctx.write_multiple_registers(start, &values).await?;
+        self.ctx.write_multiple_registers(start, &values).await??;
         Ok(())
     }
 
-    pub async fn get_programs(&mut self) -> Result<[Program; NUM_PROGRAMS], Error> {
+    pub async fn get_programs(&mut self) -> Result<[Program; NUM_PROGRAMS], Box<dyn Error>> {
         let mut programs = [Program::default(); NUM_PROGRAMS];
         self.get_program_field(&mut programs, REG_PROGRAM_TIME, |program, x| {
             program.time = decode_time(x).unwrap_or_default();
@@ -164,7 +165,10 @@ impl SunsynkInverter {
         Ok(programs)
     }
 
-    pub async fn set_programs(&mut self, programs: &[Program; NUM_PROGRAMS]) -> Result<(), Error> {
+    pub async fn set_programs(
+        &mut self,
+        programs: &[Program; NUM_PROGRAMS],
+    ) -> Result<(), Box<dyn Error>> {
         self.set_program_field(programs, REG_PROGRAM_TIME, |program| {
             encode_time(program.time)
         })
@@ -174,50 +178,50 @@ impl SunsynkInverter {
         Ok(())
     }
 
-    pub async fn get_clock(&mut self) -> Result<NaiveDateTime, Error> {
-        let data = self.ctx.read_holding_registers(REG_CLOCK, 3).await?;
+    pub async fn get_clock(&mut self) -> Result<NaiveDateTime, Box<dyn Error>> {
+        let data = self.ctx.read_holding_registers(REG_CLOCK, 3).await??;
         let year = 2000 + (data[0] >> 8) as i32;
         let month = (data[0] & 0xff) as u32;
         let day = (data[1] >> 8) as u32;
         let hour = (data[1] & 0xff) as u32;
         let minute = (data[2] >> 8) as u32;
         let second = (data[2] & 0xff) as u32;
-        NaiveDate::from_ymd_opt(year, month, day)
+        Ok(NaiveDate::from_ymd_opt(year, month, day)
             .and_then(|x| x.and_hms_opt(hour, minute, second))
-            .ok_or_else(|| Error::from(ErrorKind::InvalidData))
+            .ok_or_else(|| std::io::Error::from(ErrorKind::InvalidData))?)
     }
 }
 
 #[async_trait]
 impl Inverter for SunsynkInverter {
-    async fn get_info(&mut self) -> Result<Info, Error> {
+    async fn get_info(&mut self) -> Result<Info, Box<dyn Error>> {
         let capacity_ah = self
             .ctx
             .read_holding_registers(REG_BATTERY_CAPACITY_AH, 1)
-            .await?[0] as f64;
+            .await??[0] as f64;
         // There are many voltages (low, restart, equalisation, float... this one seems
         // as good as any.
         let voltage = self
             .ctx
             .read_holding_registers(REG_BATTERY_RESTART_VOLTAGE, 1)
-            .await?[0] as f64
+            .await??[0] as f64
             * 0.01;
         let charge_current = self
             .ctx
             .read_holding_registers(REG_GRID_CHARGE_CURRENT, 1)
-            .await?[0] as f64;
+            .await??[0] as f64;
         Ok(Info {
             capacity: capacity_ah * voltage,
             charge_power: charge_current * voltage,
         })
     }
 
-    async fn get_soc(&mut self) -> Result<f64, Error> {
-        let soc = self.ctx.read_holding_registers(REG_SOC, 1).await?;
+    async fn get_soc(&mut self) -> Result<f64, Box<dyn Error>> {
+        let soc = self.ctx.read_holding_registers(REG_SOC, 1).await??;
         Ok(soc[0] as f64)
     }
 
-    async fn set_min_soc(&mut self, target: f64, fallback: f64) -> Result<(), Error> {
+    async fn set_min_soc(&mut self, target: f64, fallback: f64) -> Result<(), Box<dyn Error>> {
         let dt = self.get_clock().await?;
         let programs = make_programs(target, fallback, dt);
         for (i, program) in programs.iter().enumerate() {

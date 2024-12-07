@@ -18,7 +18,6 @@ use chrono::{DateTime, Duration, Utc};
 use log::{error, info, warn};
 use radians::Deg64;
 use std::cmp::min;
-use std::io::Error;
 use std::sync::Mutex;
 use std::time::Instant;
 use tokio::time::MissedTickBehavior;
@@ -188,7 +187,7 @@ async fn update_inverter(
     monitor: &mut dyn Monitor,
     state: &Mutex<Option<State>>,
     esp_timeout: Duration,
-) -> Result<(), Error> {
+) -> Result<(), Box<dyn std::error::Error>> {
     let now = Utc::now();
     let info = inverter.get_info().await?;
     let current_soc = inverter.get_soc().await?;

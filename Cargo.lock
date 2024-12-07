@@ -1086,9 +1086,9 @@ dependencies = [
 
 [[package]]
 name = "modbus-robust"
-version = "0.1.0"
+version = "0.2.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "4efb5df2e29d48ae9dcc51ef9255aae09f2f3f2a20a3d67ca8c11912ef2f2d5f"
+checksum = "cb003d13b507a1c281916df2522f9e9d91c2fea6f4026d1f5b3b7767a2f48b6c"
 dependencies = [
  "async-trait",
  "tokio",
@@ -1907,20 +1907,19 @@ dependencies = [
 
 [[package]]
 name = "tokio-modbus"
-version = "0.9.0"
+version = "0.16.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "e0f38205d1e83e64947e0b07731cc05667952f5fb0986279573022305edfbf4e"
+checksum = "e493b54318dffe0c341d705839c58cdad1fca4b77d1e0a5d8ab1c22ac175bf37"
 dependencies = [
  "async-trait",
  "byteorder",
  "bytes",
- "futures",
+ "futures-core",
  "futures-util",
  "log",
  "smallvec",
- "socket2",
+ "thiserror 2.0.5",
  "tokio",
- "tokio-serial",
  "tokio-util",
 ]
 
