@@ -22,11 +22,20 @@ pub struct Info {
     pub charge_power: f64, // W
 }
 
+pub struct CoilInfo {
+    /// Reading at the CT coil (W) - positive for import from grid
+    pub coil: f64,
+    /// Reading at the inverter (W) - positive for import from grid
+    pub inverter: f64,
+}
+
 #[async_trait]
 pub trait Inverter: Send {
     async fn get_info(&mut self) -> Result<Info, Box<dyn Error>>;
     async fn get_soc(&mut self) -> Result<f64, Box<dyn Error>>;
     async fn set_min_soc(&mut self, target: f64, fallback: f64) -> Result<(), Box<dyn Error>>;
+    async fn get_coil(&mut self) -> Result<Option<CoilInfo>, Box<dyn Error>>;
+    async fn set_trickle(&mut self, trickle: f64) -> Result<(), Box<dyn Error>>;
 }
 
 /// Wrap another inverter class to turn set methods into nops
@@ -53,6 +62,14 @@ impl<T: Inverter> Inverter for DryrunInverter<T> {
     async fn set_min_soc(&mut self, _target: f64, _fallback: f64) -> Result<(), Box<dyn Error>> {
         Ok(())
     }
+
+    async fn get_coil(&mut self) -> Result<Option<CoilInfo>, Box<dyn Error>> {
+        self.base.get_coil().await
+    }
+
+    async fn set_trickle(&mut self, _trickle: f64) -> Result<(), Box<dyn Error>> {
+        Ok(())
+    }
 }
 
 #[cfg(test)]
@@ -61,11 +78,11 @@ mod test {
     use async_trait::async_trait;
 
     struct TestInverter {
-        pub clock: DateTime<Utc>,
         pub target_soc: f64,
         pub fallback_soc: f64,
         pub soc: f64,
-        pub inject_error: Option<Box<dyn Error>>, // Error returned on next call (one-shot)
+        pub trickle: f64,
+        pub inject_error: Option<Box<dyn Error + Send + Sync>>, // Error returned on next call (one-shot)
     }
 
     impl TestInverter {
@@ -89,16 +106,24 @@ mod test {
             Ok(self.soc)
         }
 
-        async fn set_clock(&mut self, dt: DateTime<Utc>) -> Result<(), Box<dyn Error>> {
-            self.check_inject_error()?;
-            self.clock = dt;
-            Ok(())
-        }
-
         async fn set_min_soc(&mut self, target: f64, fallback: f64) -> Result<(), Box<dyn Error>> {
             self.check_inject_error()?;
             self.target_soc = target;
             self.fallback_soc = fallback;
+            Ok(())
+        }
+
+        async fn get_coil(&mut self) -> Result<Option<CoilInfo>, Box<dyn Error>> {
+            self.check_inject_error()?;
+            Ok(Some(CoilInfo {
+                coil: 450.0,
+                inverter: 200.0,
+            }))
+        }
+
+        async fn set_trickle(&mut self, trickle: f64) -> Result<(), Box<dyn Error>> {
+            self.check_inject_error()?;
+            self.trickle = trickle;
             Ok(())
         }
     }

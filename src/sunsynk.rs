@@ -24,7 +24,7 @@ use tokio_modbus::client::Context;
 use tokio_modbus::prelude::{Reader, Writer};
 use tokio_modbus::slave::Slave;
 
-use super::inverter::{Info, Inverter};
+use super::inverter::{CoilInfo, Info, Inverter};
 
 const NUM_PROGRAMS: usize = 6;
 const REG_CLOCK: u16 = 22;
@@ -34,6 +34,9 @@ const REG_GRID_CHARGE_CURRENT: u16 = 230;
 const REG_SOC: u16 = 184;
 const REG_PROGRAM_TIME: u16 = 250;
 const REG_PROGRAM_SOC: u16 = 268;
+const REG_TRICKLE: u16 = 206;
+const REG_COIL_POWER: u16 = 172;
+const REG_INVERTER_POWER: u16 = 167;
 
 pub struct SunsynkInverter {
     ctx: Context,
@@ -233,5 +236,23 @@ impl Inverter for SunsynkInverter {
             );
         }
         self.set_programs(&programs).await
+    }
+
+    async fn get_coil(&mut self) -> Result<Option<CoilInfo>, Box<dyn Error>> {
+        let coil = self.ctx.read_holding_registers(REG_COIL_POWER, 1).await??[0] as f64;
+        let inverter = self
+            .ctx
+            .read_holding_registers(REG_INVERTER_POWER, 1)
+            .await??[0] as f64;
+        Ok(Some(CoilInfo { coil, inverter }))
+    }
+
+    async fn set_trickle(&mut self, trickle: f64) -> Result<(), Box<dyn Error>> {
+        let trickle = (trickle / 10.0).round() * 10.0; // UI only supports multiples of 10W
+        let trickle = trickle.clamp(0.0, 32760.0).round() as u16;
+        self.ctx
+            .write_multiple_registers(REG_TRICKLE, &[trickle, 0])
+            .await??;
+        Ok(())
     }
 }

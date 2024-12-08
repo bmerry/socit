@@ -91,8 +91,16 @@ fn default_host() -> String {
 
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
+pub struct CoilConfig {
+    pub power_threshold: f64,
+    pub trickle: f64,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct Config {
     pub inverter: InverterConfig,
+    pub coil: Option<CoilConfig>,
     pub esp: EspConfig,
     pub influxdb2: Option<Influxdb2Config>,
 }
