@@ -37,6 +37,7 @@ const REG_PROGRAM_SOC: u16 = 268;
 const REG_TRICKLE: u16 = 206;
 const REG_COIL_POWER: u16 = 172;
 const REG_INVERTER_POWER: u16 = 167;
+const REG_SYSTEM_MODE: u16 = 244;
 
 pub struct SunsynkInverter {
     ctx: Context,
@@ -130,7 +131,7 @@ impl SunsynkInverter {
         programs: &mut [Program],
         start: u16,
         apply: impl Fn(&mut Program, u16),
-    ) -> Result<(), Box<dyn Error>> {
+    ) -> Result<(), Box<dyn Error + Send + Sync>> {
         let values = self
             .ctx
             .read_holding_registers(start, NUM_PROGRAMS as u16)
@@ -146,7 +147,7 @@ impl SunsynkInverter {
         programs: &[Program],
         start: u16,
         get: impl Fn(&Program) -> u16,
-    ) -> Result<(), Box<dyn Error>> {
+    ) -> Result<(), Box<dyn Error + Send + Sync>> {
         let mut values = [0u16; NUM_PROGRAMS];
         for (program, value) in programs.iter().zip(values.iter_mut()) {
             *value = get(program);
@@ -155,7 +156,9 @@ impl SunsynkInverter {
         Ok(())
     }
 
-    pub async fn get_programs(&mut self) -> Result<[Program; NUM_PROGRAMS], Box<dyn Error>> {
+    pub async fn get_programs(
+        &mut self,
+    ) -> Result<[Program; NUM_PROGRAMS], Box<dyn Error + Send + Sync>> {
         let mut programs = [Program::default(); NUM_PROGRAMS];
         self.get_program_field(&mut programs, REG_PROGRAM_TIME, |program, x| {
             program.time = decode_time(x).unwrap_or_default();
@@ -171,7 +174,7 @@ impl SunsynkInverter {
     pub async fn set_programs(
         &mut self,
         programs: &[Program; NUM_PROGRAMS],
-    ) -> Result<(), Box<dyn Error>> {
+    ) -> Result<(), Box<dyn Error + Send + Sync>> {
         self.set_program_field(programs, REG_PROGRAM_TIME, |program| {
             encode_time(program.time)
         })
@@ -181,7 +184,7 @@ impl SunsynkInverter {
         Ok(())
     }
 
-    pub async fn get_clock(&mut self) -> Result<NaiveDateTime, Box<dyn Error>> {
+    pub async fn get_clock(&mut self) -> Result<NaiveDateTime, Box<dyn Error + Send + Sync>> {
         let data = self.ctx.read_holding_registers(REG_CLOCK, 3).await??;
         let year = 2000 + (data[0] >> 8) as i32;
         let month = (data[0] & 0xff) as u32;
@@ -197,7 +200,7 @@ impl SunsynkInverter {
 
 #[async_trait]
 impl Inverter for SunsynkInverter {
-    async fn get_info(&mut self) -> Result<Info, Box<dyn Error>> {
+    async fn get_info(&mut self) -> Result<Info, Box<dyn Error + Send + Sync>> {
         let capacity_ah = self
             .ctx
             .read_holding_registers(REG_BATTERY_CAPACITY_AH, 1)
@@ -219,12 +222,16 @@ impl Inverter for SunsynkInverter {
         })
     }
 
-    async fn get_soc(&mut self) -> Result<f64, Box<dyn Error>> {
+    async fn get_soc(&mut self) -> Result<f64, Box<dyn Error + Send + Sync>> {
         let soc = self.ctx.read_holding_registers(REG_SOC, 1).await??;
         Ok(soc[0] as f64)
     }
 
-    async fn set_min_soc(&mut self, target: f64, fallback: f64) -> Result<(), Box<dyn Error>> {
+    async fn set_min_soc(
+        &mut self,
+        target: f64,
+        fallback: f64,
+    ) -> Result<(), Box<dyn Error + Send + Sync>> {
         let dt = self.get_clock().await?;
         let programs = make_programs(target, fallback, dt);
         for (i, program) in programs.iter().enumerate() {
@@ -238,16 +245,24 @@ impl Inverter for SunsynkInverter {
         self.set_programs(&programs).await
     }
 
-    async fn get_coil(&mut self) -> Result<Option<CoilInfo>, Box<dyn Error>> {
-        let coil = self.ctx.read_holding_registers(REG_COIL_POWER, 1).await??[0] as f64;
+    async fn get_coil(&mut self) -> Result<Option<CoilInfo>, Box<dyn Error + Send + Sync>> {
+        let coil = self.ctx.read_holding_registers(REG_COIL_POWER, 1).await??[0] as i16 as f64;
         let inverter = self
             .ctx
             .read_holding_registers(REG_INVERTER_POWER, 1)
-            .await??[0] as f64;
-        Ok(Some(CoilInfo { coil, inverter }))
+            .await??[0] as i16 as f64;
+        let mode = self
+            .ctx
+            .read_holding_registers(REG_SYSTEM_MODE, 1)
+            .await??[0];
+        Ok(Some(CoilInfo {
+            coil,
+            inverter,
+            coil_active: mode == 2,
+        }))
     }
 
-    async fn set_trickle(&mut self, trickle: f64) -> Result<(), Box<dyn Error>> {
+    async fn set_trickle(&mut self, trickle: f64) -> Result<(), Box<dyn Error + Send + Sync>> {
         let trickle = (trickle / 10.0).round() * 10.0; // UI only supports multiples of 10W
         let trickle = trickle.clamp(0.0, 32760.0).round() as u16;
         self.ctx

@@ -1,4 +1,4 @@
-/* Copyright 2023 Bruce Merry
+/* Copyright 2023-2024 Bruce Merry
  *
  * This program is free software: you can redistribute it and/or modify it
  * under the terms of the GNU General Public License as published by the Free
@@ -77,16 +77,13 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let control_token = token.clone();
     let state = Arc::new(Mutex::new(None));
     let state2 = state.clone();
-    let api = API::new(config.esp.key)?;
+    /* TODO: see if there is a nice way to avoid cloning (std::mem::take
+     * requires making config mutable).
+     */
+    let api = API::new(config.esp.key.clone())?;
+    let area = config.esp.area.clone();
     let esp_handle = tokio::spawn(async move {
-        control::poll_esp(
-            &api,
-            &config.esp.area,
-            config.esp.interval,
-            &state,
-            esp_token,
-        )
-        .await;
+        control::poll_esp(&api, &area, config.esp.interval, &state, esp_token).await;
     });
     let mut monitor: Box<dyn Monitor> = match &config.influxdb2 {
         Some(conf) => Box::new(Influxdb2Monitor::new(conf).await),
@@ -96,8 +93,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         // Give poll_esp some time to load the first set of information
         tokio::time::sleep(std::time::Duration::from_secs(5)).await;
         control::control_inverter(
-            &mut inverter,
-            &config.inverter,
+            inverter.as_mut(),
+            &config,
             &mut *monitor,
             &state2,
             esp_timeout,
