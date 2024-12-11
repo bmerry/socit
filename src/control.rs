@@ -16,6 +16,7 @@
 
 use async_trait::async_trait;
 use chrono::{DateTime, Duration, Utc};
+use futures::StreamExt;
 use log::{error, info, warn};
 use radians::Deg64;
 use std::cmp::min;
@@ -24,6 +25,7 @@ use std::error::Error;
 use std::sync::Mutex;
 use std::time::Instant;
 use tokio::time::MissedTickBehavior;
+use tokio_stream::StreamMap;
 use tokio_util::sync::CancellationToken;
 
 use crate::config::{CoilConfig, Config, InverterConfig, PanelConfig};
@@ -246,7 +248,7 @@ async fn update_soc(
 }
 
 #[async_trait]
-trait Controller {
+trait Controller: Send + Unpin {
     fn interval(&self) -> std::time::Duration;
     async fn update(&mut self, inverter: &mut dyn Inverter);
     async fn shutdown(&mut self, inverter: &mut dyn Inverter);
@@ -378,15 +380,6 @@ impl Controller for CoilController<'_> {
     async fn shutdown(&mut self, _inverter: &mut dyn Inverter) {}
 }
 
-fn timed_controller<T>(controller: T) -> (T, tokio::time::Interval)
-where
-    T: Controller,
-{
-    let mut interval = tokio::time::interval(controller.interval());
-    interval.set_missed_tick_behavior(MissedTickBehavior::Delay);
-    (controller, interval)
-}
-
 pub async fn control_inverter(
     inverter: &mut dyn Inverter,
     config: &Config,
@@ -395,21 +388,31 @@ pub async fn control_inverter(
     esp_timeout: Duration,
     token: CancellationToken,
 ) {
-    let mut soc_controller = timed_controller(SocController::new(
+    let mut controllers: Vec<Box<dyn Controller>> = Vec::new();
+    controllers.push(Box::new(SocController::new(
         &config.inverter,
         monitor,
         state,
         esp_timeout,
-    ));
-    let mut coil_controller = timed_controller(CoilController::new(config.coil.as_ref().unwrap()));
+    )));
+    if let Some(coil_config) = &config.coil {
+        controllers.push(Box::new(CoilController::new(coil_config)));
+    }
+    let mut stream = StreamMap::new();
+    for (i, controller) in controllers.iter().enumerate() {
+        let mut interval = tokio::time::interval(controller.interval());
+        interval.set_missed_tick_behavior(MissedTickBehavior::Delay);
+        stream.insert(i, tokio_stream::wrappers::IntervalStream::new(interval));
+    }
+
     loop {
         tokio::select! {
-            _ = soc_controller.1.tick() => { soc_controller.0.update(inverter).await; }
-            _ = coil_controller.1.tick() => { coil_controller.0.update(inverter).await; }
+            Some((idx, _)) = stream.next() => { controllers[idx].update(inverter).await; }
             _ = token.cancelled() => { break; }
         }
     }
 
-    soc_controller.0.shutdown(inverter).await;
-    coil_controller.0.shutdown(inverter).await;
+    for controller in controllers.iter_mut() {
+        controller.shutdown(inverter).await;
+    }
 }
