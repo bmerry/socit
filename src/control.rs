@@ -316,6 +316,7 @@ impl Controller for SocController<'_> {
 struct CoilController<'a> {
     history: VecDeque<Option<f64>>,
     config: &'a CoilConfig,
+    last_setting: Option<f64>,
 }
 
 impl<'a> CoilController<'a> {
@@ -325,6 +326,7 @@ impl<'a> CoilController<'a> {
         Self {
             history: VecDeque::with_capacity(Self::CAPACITY),
             config,
+            last_setting: None,
         }
     }
 
@@ -342,17 +344,24 @@ impl<'a> CoilController<'a> {
             self.history.pop_front();
         }
         self.history.push_back(target);
-        if self.history.len() == Self::CAPACITY {
-            // Compute the sum if all elements are not None
-            if let Some(sum) = self.history.iter().cloned().sum::<Option<f64>>() {
-                let mean = sum / (self.history.len() as f64);
-                if info.map_or(false, |x| x.coil_active) {
-                    info!("Setting trickle setting to {mean}.");
-                    inverter.set_trickle(mean).await?;
-                } else {
-                    info!("Ideal trickle setting is {mean}, but coil is not active.");
-                }
+        if self.history.len() != Self::CAPACITY {
+            return Ok(());
+        }
+        // Compute the sum if all elements are not None
+        let Some(sum) = self.history.iter().cloned().sum::<Option<f64>>() else {
+            return Ok(());
+        };
+        let mean = sum / (self.history.len() as f64);
+        if info.map_or(false, |x| x.coil_active) {
+            if self.last_setting.map_or(true, |x| (x - mean).abs() >= 10.0) {
+                info!("Setting trickle to {mean}.");
+                inverter.set_trickle(mean).await?;
+                self.last_setting = Some(mean);
+            } else {
+                info!("Ideal trickle setting is {mean}, but not setting due to hysteresis");
             }
+        } else {
+            info!("Ideal trickle setting is {mean}, but coil is not active.");
         }
         Ok(())
     }

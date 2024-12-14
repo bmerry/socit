@@ -128,7 +128,15 @@ impl SunsynkInverter {
     }
 
     async fn write(&mut self, addr: u16, words: &[u16]) -> Result<()> {
-        Ok(self.ctx.write_multiple_registers(addr, words).await??)
+        /* Avoid writing a value that's the same as the current value,
+         * to avoid wearing out EEPROM (although possibly the firmware
+         * already does this).
+         */
+        let old = self.read(addr, words.len() as u16).await?;
+        if words != old {
+            self.ctx.write_multiple_registers(addr, words).await??;
+        }
+        Ok(())
     }
 
     pub fn new(device: &str, modbus_id: u8) -> Self {
