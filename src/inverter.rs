@@ -15,7 +15,9 @@
  */
 
 use async_trait::async_trait;
-use std::error::Error;
+
+pub type Error = Box<dyn std::error::Error + Send + Sync>;
+pub type Result<T> = std::result::Result<T, Error>;
 
 pub struct Info {
     pub capacity: f64,     // Wh
@@ -33,15 +35,11 @@ pub struct CoilInfo {
 
 #[async_trait]
 pub trait Inverter: Send {
-    async fn get_info(&mut self) -> Result<Info, Box<dyn Error + Send + Sync>>;
-    async fn get_soc(&mut self) -> Result<f64, Box<dyn Error + Send + Sync>>;
-    async fn set_min_soc(
-        &mut self,
-        target: f64,
-        fallback: f64,
-    ) -> Result<(), Box<dyn Error + Send + Sync>>;
-    async fn get_coil(&mut self) -> Result<Option<CoilInfo>, Box<dyn Error + Send + Sync>>;
-    async fn set_trickle(&mut self, trickle: f64) -> Result<(), Box<dyn Error + Send + Sync>>;
+    async fn get_info(&mut self) -> Result<Info>;
+    async fn get_soc(&mut self) -> Result<f64>;
+    async fn set_min_soc(&mut self, target: f64, fallback: f64) -> Result<()>;
+    async fn get_coil(&mut self) -> Result<Option<CoilInfo>>;
+    async fn set_trickle(&mut self, trickle: f64) -> Result<()>;
 }
 
 /// Wrap another inverter class to turn set methods into nops
@@ -57,27 +55,23 @@ impl<T: Inverter> DryrunInverter<T> {
 
 #[async_trait]
 impl<T: Inverter> Inverter for DryrunInverter<T> {
-    async fn get_info(&mut self) -> Result<Info, Box<dyn Error + Send + Sync>> {
+    async fn get_info(&mut self) -> Result<Info> {
         self.base.get_info().await
     }
 
-    async fn get_soc(&mut self) -> Result<f64, Box<dyn Error + Send + Sync>> {
+    async fn get_soc(&mut self) -> Result<f64> {
         self.base.get_soc().await
     }
 
-    async fn set_min_soc(
-        &mut self,
-        _target: f64,
-        _fallback: f64,
-    ) -> Result<(), Box<dyn Error + Send + Sync>> {
+    async fn set_min_soc(&mut self, _target: f64, _fallback: f64) -> Result<()> {
         Ok(())
     }
 
-    async fn get_coil(&mut self) -> Result<Option<CoilInfo>, Box<dyn Error + Send + Sync>> {
+    async fn get_coil(&mut self) -> Result<Option<CoilInfo>> {
         self.base.get_coil().await
     }
 
-    async fn set_trickle(&mut self, _trickle: f64) -> Result<(), Box<dyn Error + Send + Sync>> {
+    async fn set_trickle(&mut self, _trickle: f64) -> Result<()> {
         Ok(())
     }
 }
@@ -92,18 +86,18 @@ mod test {
         pub fallback_soc: f64,
         pub soc: f64,
         pub trickle: f64,
-        pub inject_error: Option<Box<dyn Error + Send + Sync>>, // Error returned on next call (one-shot)
+        pub inject_error: Option<Error>, // Error returned on next call (one-shot)
     }
 
     impl TestInverter {
-        fn check_inject_error(&mut self) -> Result<(), Box<dyn Error + Send + Sync>> {
+        fn check_inject_error(&mut self) -> Result<()> {
             self.inject_error.take().map_or(Ok(()), |err| Err(err))
         }
     }
 
     #[async_trait]
     impl Inverter for TestInverter {
-        async fn get_info(&mut self) -> Result<Info, Box<dyn Error + Send + Sync>> {
+        async fn get_info(&mut self) -> Result<Info> {
             self.check_inject_error()?;
             Ok(Info {
                 capacity: 5000.0,
@@ -111,23 +105,19 @@ mod test {
             })
         }
 
-        async fn get_soc(&mut self) -> Result<f64, Box<dyn Error + Send + Sync>> {
+        async fn get_soc(&mut self) -> Result<f64> {
             self.check_inject_error()?;
             Ok(self.soc)
         }
 
-        async fn set_min_soc(
-            &mut self,
-            target: f64,
-            fallback: f64,
-        ) -> Result<(), Box<dyn Error + Send + Sync>> {
+        async fn set_min_soc(&mut self, target: f64, fallback: f64) -> Result<()> {
             self.check_inject_error()?;
             self.target_soc = target;
             self.fallback_soc = fallback;
             Ok(())
         }
 
-        async fn get_coil(&mut self) -> Result<Option<CoilInfo>, Box<dyn Error + Send + Sync>> {
+        async fn get_coil(&mut self) -> Result<Option<CoilInfo>> {
             self.check_inject_error()?;
             Ok(Some(CoilInfo {
                 coil: 450.0,
@@ -136,7 +126,7 @@ mod test {
             }))
         }
 
-        async fn set_trickle(&mut self, trickle: f64) -> Result<(), Box<dyn Error + Send + Sync>> {
+        async fn set_trickle(&mut self, trickle: f64) -> Result<()> {
             self.check_inject_error()?;
             self.trickle = trickle;
             Ok(())

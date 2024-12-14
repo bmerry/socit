@@ -21,7 +21,6 @@ use log::{error, info, warn};
 use radians::Deg64;
 use std::cmp::min;
 use std::collections::VecDeque;
-use std::error::Error;
 use std::sync::Mutex;
 use std::time::Instant;
 use tokio::time::MissedTickBehavior;
@@ -30,7 +29,7 @@ use tokio_util::sync::CancellationToken;
 
 use crate::config::{CoilConfig, Config, InverterConfig, PanelConfig};
 use crate::esp_api::{AreaResponse, API};
-use crate::inverter::{Info, Inverter};
+use crate::inverter::{Info, Inverter, Result};
 use crate::monitoring::{Monitor, Update};
 use crate::sun::solar_fraction;
 
@@ -192,7 +191,7 @@ async fn update_soc(
     monitor: &mut dyn Monitor,
     state: &Mutex<Option<State>>,
     esp_timeout: Duration,
-) -> Result<(), Box<dyn Error + Send + Sync>> {
+) -> Result<()> {
     let now = Utc::now();
     let info = inverter.get_info().await?;
     let current_soc = inverter.get_soc().await?;
@@ -329,10 +328,7 @@ impl<'a> CoilController<'a> {
         }
     }
 
-    async fn update_fallible(
-        &mut self,
-        inverter: &mut dyn Inverter,
-    ) -> Result<(), Box<dyn Error + Send + Sync>> {
+    async fn update_fallible(&mut self, inverter: &mut dyn Inverter) -> Result<()> {
         let info = inverter.get_coil().await?;
         let mut target = None;
         if let Some(value) = &info {
