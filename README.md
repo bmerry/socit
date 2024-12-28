@@ -86,6 +86,13 @@ trickle charge cannot be set to negative values.
 
 ## Changelog
 
+### 0.3.0
+
+- Add optional control over the trickle charge setting (see above).
+- Change time handling: instead of setting the inverter's clock, just take
+  the clock skew into account.
+- Update dependencies.
+
 ### 0.2.1
 
 - Refactor the robust modbus access into a separate crate (modbus-robust).
