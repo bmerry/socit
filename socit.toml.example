@@ -56,6 +56,18 @@ charge_power = 1800
 # (the inverter is still read on startup to determine capacity etc).
 dry_run = false
 
+# Optional section that can be used to compensate for bias in the CT coil
+# (e.g. from electromagnetic interference). Any "non-essential" usage
+# below a threshold is assumed to be sensor bias and the trickle charge
+# is adjusted to compensate.
+[coil]
+# Minimum power used by non-essential appliances (e.g. geyser, stove) (W)
+power_threshold = 800
+# The "true" amount of power you'd like to continuously import from the
+# grid (W). Note that this can be negative: I find I need to set it to a
+# small negative value to zero out power at my electricity meter.
+trickle = 10
+
 # Configure the position and orientation of the solar panels. If you have
 # several sets of panels with different orientation, you can use multiple
 # copies of this section.

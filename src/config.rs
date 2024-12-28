@@ -1,4 +1,4 @@
-/* Copyright 2023 Bruce Merry
+/* Copyright 2023-2024 Bruce Merry
  *
  * This program is free software: you can redistribute it and/or modify it
  * under the terms of the GNU General Public License as published by the Free
@@ -91,8 +91,16 @@ fn default_host() -> String {
 
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
+pub struct CoilConfig {
+    pub power_threshold: f64,
+    pub trickle: f64,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct Config {
     pub inverter: InverterConfig,
+    pub coil: Option<CoilConfig>,
     pub esp: EspConfig,
     pub influxdb2: Option<Influxdb2Config>,
 }

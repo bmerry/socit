@@ -47,9 +47,9 @@ so you can enable logging by (for example) setting the environment variable
 ## Time synchronisation
 
 You should ensure that the system running socit has its time zone correctly
-set and its clock synchronised e.g. with NTP. Socit periodically updates the
-time on the inverter to match that of the host (so the inverter clock will
-stay in sync even without the official dongle).
+set and its clock synchronised e.g. with NTP. The inverter does not need
+to have time correctly set. Socit will compensate for an incorrect inverter
+time.
 
 ## Algorithm
 
@@ -68,6 +68,21 @@ is used for the load, but the battery is not changed, while below
 `alarm_soc` has no internal effect, but in stored in the database can be used
 by external alerting tools: if the actual SoC is below `alarm_soc`, then there
 is a risk of falling below `minimum_soc`.
+
+## Trickle charge adjustment
+
+As a separate feature, Socit can dynamically adjust your trickle charge setting
+to compensate for electro-magnetic interference (EMI) in the readings from your
+CT coil. Mine is particularly bad (errors are typically 200-300W and go up to
+500W), causing significant export of power if not corrected for. My
+non-essentials (geyser and stove) draw either no power or a large amount of
+power (kW+), so any calculated non-essential power draw that's less than this
+is assumed to be CT coil error, and is compensated for by adjusting the trickle
+charge.
+
+Note that this works for me because the EMI consistently causes the coil to
+over-read. If it under-reads, this solution will not work for you because the
+trickle charge cannot be set to negative values.
 
 ## Changelog
 

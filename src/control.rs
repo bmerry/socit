@@ -14,18 +14,22 @@
  * with this program. If not, see <https://www.gnu.org/licenses/>.
  */
 
+use async_trait::async_trait;
 use chrono::{DateTime, Duration, Utc};
+use futures::StreamExt;
 use log::{error, info, warn};
 use radians::Deg64;
 use std::cmp::min;
+use std::collections::VecDeque;
 use std::sync::Mutex;
 use std::time::Instant;
 use tokio::time::MissedTickBehavior;
+use tokio_stream::StreamMap;
 use tokio_util::sync::CancellationToken;
 
-use crate::config::{InverterConfig, PanelConfig};
+use crate::config::{CoilConfig, Config, InverterConfig, PanelConfig};
 use crate::esp_api::{AreaResponse, API};
-use crate::inverter::{Info, Inverter};
+use crate::inverter::{Info, Inverter, Result};
 use crate::monitoring::{Monitor, Update};
 use crate::sun::solar_fraction;
 
@@ -181,13 +185,13 @@ fn target_socs(
     }
 }
 
-async fn update_inverter(
-    inverter: &mut Box<dyn Inverter>,
+async fn update_soc(
+    inverter: &mut dyn Inverter,
     config: &InverterConfig,
     monitor: &mut dyn Monitor,
     state: &Mutex<Option<State>>,
     esp_timeout: Duration,
-) -> Result<(), Box<dyn std::error::Error>> {
+) -> Result<()> {
     let now = Utc::now();
     let info = inverter.get_info().await?;
     let current_soc = inverter.get_soc().await?;
@@ -242,37 +246,178 @@ async fn update_inverter(
     Ok(())
 }
 
+#[async_trait]
+trait Controller: Send + Unpin {
+    fn interval(&self) -> std::time::Duration;
+    async fn update(&mut self, inverter: &mut dyn Inverter);
+    async fn shutdown(&mut self, inverter: &mut dyn Inverter);
+}
+
+struct SocController<'a> {
+    config: &'a InverterConfig,
+    monitor: &'a mut dyn Monitor,
+    state: &'a Mutex<Option<State>>,
+    esp_timeout: Duration,
+}
+
+impl<'a> SocController<'a> {
+    fn new(
+        config: &'a InverterConfig,
+        monitor: &'a mut dyn Monitor,
+        state: &'a Mutex<Option<State>>,
+        esp_timeout: Duration,
+    ) -> Self {
+        Self {
+            config,
+            monitor,
+            state,
+            esp_timeout,
+        }
+    }
+}
+
+#[async_trait]
+impl Controller for SocController<'_> {
+    fn interval(&self) -> std::time::Duration {
+        std::time::Duration::from_secs(60)
+    }
+
+    async fn update(&mut self, inverter: &mut dyn Inverter) {
+        if let Err(err) = update_soc(
+            inverter,
+            self.config,
+            self.monitor,
+            self.state,
+            self.esp_timeout,
+        )
+        .await
+        {
+            warn!("Failed to update inverter: {err}");
+        }
+    }
+
+    async fn shutdown(&mut self, inverter: &mut dyn Inverter) {
+        info!(
+            "Shutting down, setting minimum SoC to {}",
+            self.config.fallback_soc
+        );
+        match inverter
+            .set_min_soc(self.config.fallback_soc, self.config.fallback_soc)
+            .await
+        {
+            Ok(_) => {}
+            Err(err) => {
+                error!("Failed to set minimum SoC: {err}");
+            }
+        }
+    }
+}
+
+struct CoilController<'a> {
+    history: VecDeque<Option<f64>>,
+    config: &'a CoilConfig,
+    last_setting: Option<f64>,
+}
+
+impl<'a> CoilController<'a> {
+    const CAPACITY: usize = 11;
+
+    fn new(config: &'a CoilConfig) -> Self {
+        Self {
+            history: VecDeque::with_capacity(Self::CAPACITY),
+            config,
+            last_setting: None,
+        }
+    }
+
+    async fn update_fallible(&mut self, inverter: &mut dyn Inverter) -> Result<()> {
+        let info = inverter.get_coil().await?;
+        let mut target = None;
+        if let Some(value) = &info {
+            let ne = value.coil - value.inverter;
+            if ne <= self.config.power_threshold {
+                // It's fake power from misreading coil
+                target = Some(ne + self.config.trickle);
+            }
+        }
+        if self.history.len() == Self::CAPACITY {
+            self.history.pop_front();
+        }
+        self.history.push_back(target);
+        if self.history.len() != Self::CAPACITY {
+            return Ok(());
+        }
+        // Compute the sum if all elements are not None
+        let Some(sum) = self.history.iter().cloned().sum::<Option<f64>>() else {
+            return Ok(());
+        };
+        let mean = sum / (self.history.len() as f64);
+        if info.map_or(false, |x| x.coil_active) {
+            if self.last_setting.map_or(true, |x| (x - mean).abs() >= 10.0) {
+                info!("Setting trickle to {mean}.");
+                inverter.set_trickle(mean).await?;
+                self.last_setting = Some(mean);
+            } else {
+                info!("Ideal trickle setting is {mean}, but not setting due to hysteresis");
+            }
+        } else {
+            info!("Ideal trickle setting is {mean}, but coil is not active.");
+        }
+        Ok(())
+    }
+}
+
+#[async_trait]
+impl Controller for CoilController<'_> {
+    fn interval(&self) -> std::time::Duration {
+        std::time::Duration::from_secs(10)
+    }
+
+    async fn update(&mut self, inverter: &mut dyn Inverter) {
+        match self.update_fallible(inverter).await {
+            Ok(_) => {}
+            Err(err) => {
+                error!("Failed to update CT coil: {err}");
+            }
+        }
+    }
+
+    async fn shutdown(&mut self, _inverter: &mut dyn Inverter) {}
+}
+
 pub async fn control_inverter(
-    inverter: &mut Box<dyn Inverter>,
-    config: &InverterConfig,
+    inverter: &mut dyn Inverter,
+    config: &Config,
     monitor: &mut dyn Monitor,
     state: &Mutex<Option<State>>,
     esp_timeout: Duration,
     token: CancellationToken,
 ) {
-    let mut interval = tokio::time::interval(std::time::Duration::from_secs(60));
-    interval.set_missed_tick_behavior(MissedTickBehavior::Delay);
+    let mut controllers: Vec<Box<dyn Controller>> = Vec::new();
+    controllers.push(Box::new(SocController::new(
+        &config.inverter,
+        monitor,
+        state,
+        esp_timeout,
+    )));
+    if let Some(coil_config) = &config.coil {
+        controllers.push(Box::new(CoilController::new(coil_config)));
+    }
+    let mut stream = StreamMap::new();
+    for (i, controller) in controllers.iter().enumerate() {
+        let mut interval = tokio::time::interval(controller.interval());
+        interval.set_missed_tick_behavior(MissedTickBehavior::Delay);
+        stream.insert(i, tokio_stream::wrappers::IntervalStream::new(interval));
+    }
+
     loop {
         tokio::select! {
-            _ = interval.tick() => {},
+            Some((idx, _)) = stream.next() => { controllers[idx].update(inverter).await; }
             _ = token.cancelled() => { break; }
-        }
-        if let Err(err) = update_inverter(inverter, config, monitor, state, esp_timeout).await {
-            warn!("Failed to update inverter: {err}");
         }
     }
 
-    info!(
-        "Shutting down, setting minimum SoC to {}",
-        config.fallback_soc
-    );
-    match inverter
-        .set_min_soc(config.fallback_soc, config.fallback_soc)
-        .await
-    {
-        Ok(_) => {}
-        Err(err) => {
-            error!("Failed to set minimum SoC: {err}");
-        }
+    for controller in controllers.iter_mut() {
+        controller.shutdown(inverter).await;
     }
 }
