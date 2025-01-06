@@ -1,4 +1,4 @@
-/* Copyright 2023 Bruce Merry
+/* Copyright 2023, 2025 Bruce Merry
  *
  * This program is free software: you can redistribute it and/or modify it
  * under the terms of the GNU General Public License as published by the Free
@@ -23,7 +23,7 @@ use log::{info, warn};
 use std::error::Error;
 
 use crate::config::Influxdb2Config;
-use crate::monitoring::{Monitor, Update};
+use crate::monitoring::{CoilUpdate, Monitor, SocUpdate};
 
 pub struct Influxdb2Monitor {
     client: Client,
@@ -64,7 +64,7 @@ impl Influxdb2Monitor {
 
 #[async_trait]
 impl Monitor for Influxdb2Monitor {
-    async fn update(&mut self, update: Update) -> Result<(), Box<dyn Error>> {
+    async fn soc_update(&mut self, update: SocUpdate) -> Result<(), Box<dyn Error>> {
         let mut builder = DataPoint::builder("socit")
             .timestamp(update.time.timestamp())
             .field("target_soc_low", update.target_soc_low)
@@ -78,6 +78,22 @@ impl Monitor for Influxdb2Monitor {
                 "next_change_seconds",
                 (next_change - update.time).num_milliseconds() as f64 * 1e-3,
             );
+        }
+        let point = builder.build().unwrap();
+        let strm = futures::stream::once(async { point });
+        self.client
+            .write_with_precision(&self.bucket, strm, TimestampPrecision::Seconds)
+            .await?;
+        Ok(())
+    }
+
+    async fn coil_update(&mut self, update: CoilUpdate) -> Result<(), Box<dyn Error>> {
+        let mut builder = DataPoint::builder("socit-coil")
+            .timestamp(update.time.timestamp())
+            .field("active", update.active)
+            .field("target", update.target);
+        if let Some(setting) = update.setting {
+            builder = builder.field("setting", setting);
         }
         let point = builder.build().unwrap();
         let strm = futures::stream::once(async { point });

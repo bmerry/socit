@@ -30,7 +30,7 @@ use tokio_util::sync::CancellationToken;
 use crate::config::{CoilConfig, Config, InverterConfig, PanelConfig};
 use crate::esp_api::{AreaResponse, API};
 use crate::inverter::{Info, Inverter, Result};
-use crate::monitoring::{Monitor, Update};
+use crate::monitoring::{CoilUpdate, Monitor, SocUpdate};
 use crate::sun::solar_fraction;
 
 pub struct State {
@@ -226,7 +226,7 @@ async fn update_soc(
             }
         }
 
-        update = Update {
+        update = SocUpdate {
             time: now,
             target_soc_low,
             target_soc_high,
@@ -239,7 +239,7 @@ async fn update_soc(
     }
 
     inverter.set_min_soc(target, config.fallback_soc).await?;
-    if let Err(err) = monitor.update(update).await {
+    if let Err(err) = monitor.soc_update(update).await {
         warn!("Failed to update monitoring: {err}");
     }
 
@@ -249,13 +249,12 @@ async fn update_soc(
 #[async_trait]
 trait Controller: Send + Unpin {
     fn interval(&self) -> std::time::Duration;
-    async fn update(&mut self, inverter: &mut dyn Inverter);
+    async fn update(&mut self, inverter: &mut dyn Inverter, monitor: &mut dyn Monitor);
     async fn shutdown(&mut self, inverter: &mut dyn Inverter);
 }
 
 struct SocController<'a> {
     config: &'a InverterConfig,
-    monitor: &'a mut dyn Monitor,
     state: &'a Mutex<Option<State>>,
     esp_timeout: Duration,
 }
@@ -263,13 +262,11 @@ struct SocController<'a> {
 impl<'a> SocController<'a> {
     fn new(
         config: &'a InverterConfig,
-        monitor: &'a mut dyn Monitor,
         state: &'a Mutex<Option<State>>,
         esp_timeout: Duration,
     ) -> Self {
         Self {
             config,
-            monitor,
             state,
             esp_timeout,
         }
@@ -282,15 +279,9 @@ impl Controller for SocController<'_> {
         std::time::Duration::from_secs(60)
     }
 
-    async fn update(&mut self, inverter: &mut dyn Inverter) {
-        if let Err(err) = update_soc(
-            inverter,
-            self.config,
-            self.monitor,
-            self.state,
-            self.esp_timeout,
-        )
-        .await
+    async fn update(&mut self, inverter: &mut dyn Inverter, monitor: &mut dyn Monitor) {
+        if let Err(err) =
+            update_soc(inverter, self.config, monitor, self.state, self.esp_timeout).await
         {
             warn!("Failed to update inverter: {err}");
         }
@@ -330,7 +321,11 @@ impl<'a> CoilController<'a> {
         }
     }
 
-    async fn update_fallible(&mut self, inverter: &mut dyn Inverter) -> Result<()> {
+    async fn update_fallible(
+        &mut self,
+        inverter: &mut dyn Inverter,
+        monitor: &mut dyn Monitor,
+    ) -> Result<()> {
         let info = inverter.get_coil().await?;
         let mut target = None;
         if let Some(value) = &info {
@@ -352,7 +347,8 @@ impl<'a> CoilController<'a> {
             return Ok(());
         };
         let mean = sum / (self.history.len() as f64);
-        if info.map_or(false, |x| x.coil_active) {
+        let coil_active = info.map_or(false, |x| x.coil_active);
+        if coil_active {
             if self.last_setting.map_or(true, |x| (x - mean).abs() >= 10.0) {
                 info!("Setting trickle to {mean}.");
                 inverter.set_trickle(mean).await?;
@@ -362,6 +358,15 @@ impl<'a> CoilController<'a> {
             }
         } else {
             info!("Ideal trickle setting is {mean}, but coil is not active.");
+        }
+        let update = CoilUpdate {
+            time: Utc::now(),
+            active: coil_active,
+            target: mean,
+            setting: self.last_setting,
+        };
+        if let Err(err) = monitor.coil_update(update).await {
+            warn!("Failed to update monitoring: {err}");
         }
         Ok(())
     }
@@ -373,8 +378,8 @@ impl Controller for CoilController<'_> {
         std::time::Duration::from_secs(10)
     }
 
-    async fn update(&mut self, inverter: &mut dyn Inverter) {
-        match self.update_fallible(inverter).await {
+    async fn update(&mut self, inverter: &mut dyn Inverter, monitor: &mut dyn Monitor) {
+        match self.update_fallible(inverter, monitor).await {
             Ok(_) => {}
             Err(err) => {
                 error!("Failed to update CT coil: {err}");
@@ -396,7 +401,6 @@ pub async fn control_inverter(
     let mut controllers: Vec<Box<dyn Controller>> = Vec::new();
     controllers.push(Box::new(SocController::new(
         &config.inverter,
-        monitor,
         state,
         esp_timeout,
     )));
@@ -412,7 +416,7 @@ pub async fn control_inverter(
 
     loop {
         tokio::select! {
-            Some((idx, _)) = stream.next() => { controllers[idx].update(inverter).await; }
+            Some((idx, _)) = stream.next() => { controllers[idx].update(inverter, monitor).await; }
             _ = token.cancelled() => { break; }
         }
     }
