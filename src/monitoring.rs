@@ -34,7 +34,7 @@ pub struct SocUpdate {
 pub struct CoilUpdate {
     pub time: DateTime<Utc>,
     pub active: bool,
-    pub target: f64,          // In watts
+    pub target: Option<f64>,  // In watts
     pub setting: Option<f64>, // In watts
 }
 

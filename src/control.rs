@@ -1,4 +1,4 @@
-/* Copyright 2023-2024 Bruce Merry
+/* Copyright 2023-2025 Bruce Merry
  *
  * This program is free software: you can redistribute it and/or modify it
  * under the terms of the GNU General Public License as published by the Free
@@ -343,21 +343,26 @@ impl<'a> CoilController<'a> {
             return Ok(());
         }
         // Compute the sum if all elements are not None
-        let Some(sum) = self.history.iter().cloned().sum::<Option<f64>>() else {
-            return Ok(());
-        };
-        let mean = sum / (self.history.len() as f64);
+        let sum = self.history.iter().cloned().sum::<Option<f64>>();
+        let mean = sum.map(|x| x / (self.history.len() as f64));
         let coil_active = info.map_or(false, |x| x.coil_active);
         if coil_active {
-            if self.last_setting.map_or(true, |x| (x - mean).abs() >= 10.0) {
-                info!("Setting trickle to {mean}.");
-                inverter.set_trickle(mean).await?;
-                self.last_setting = Some(mean);
+            if let Some(target) = mean {
+                if self
+                    .last_setting
+                    .map_or(true, |x| (x - target).abs() >= 10.0)
+                {
+                    info!("Setting trickle to {target}.");
+                    inverter.set_trickle(target).await?;
+                    self.last_setting = Some(target);
+                } else {
+                    info!("Ideal trickle setting is {target}, but not setting due to hysteresis.");
+                }
             } else {
-                info!("Ideal trickle setting is {mean}, but not setting due to hysteresis");
+                info!("Not adjusting trickle because there is no target information.")
             }
         } else {
-            info!("Ideal trickle setting is {mean}, but coil is not active.");
+            info!("Not adjusting trickle because coil is not active.");
         }
         let update = CoilUpdate {
             time: Utc::now(),

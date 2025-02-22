@@ -90,8 +90,10 @@ impl Monitor for Influxdb2Monitor {
     async fn coil_update(&mut self, update: CoilUpdate) -> Result<(), Box<dyn Error>> {
         let mut builder = DataPoint::builder("socit-coil")
             .timestamp(update.time.timestamp())
-            .field("active", update.active)
-            .field("target", update.target);
+            .field("active", update.active);
+        if let Some(target) = update.target {
+            builder = builder.field("target", target);
+        }
         if let Some(setting) = update.setting {
             builder = builder.field("setting", setting);
         }
