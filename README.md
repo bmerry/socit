@@ -86,6 +86,11 @@ trickle charge cannot be set to negative values.
 
 ## Changelog
 
+### 0.3.1
+
+- Add influxdb export of coil/trickle charge settings.
+- Update dependencies.
+
 ### 0.3.0
 
 - Add optional control over the trickle charge setting (see above).
