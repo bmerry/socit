@@ -86,6 +86,11 @@ trickle charge cannot be set to negative values.
 
 ## Changelog
 
+### 0.3.2
+
+- Update dependencies.
+- Update to Rust 2024 edition.
+
 ### 0.3.1
 
 - Add influxdb export of coil/trickle charge settings.
