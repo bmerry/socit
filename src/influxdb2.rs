@@ -70,7 +70,8 @@ impl Monitor for Influxdb2Monitor {
             .field("target_soc_low", update.target_soc_low)
             .field("target_soc_high", update.target_soc_high)
             .field("alarm_soc", update.alarm_soc)
-            .field("target_soc_export", update.target_soc_export)
+            .field("target_soc_export_low", update.target_soc_export_low)
+            .field("target_soc_export_high", update.target_soc_export_high)
             .field("current_soc", update.current_soc)
             .field("predicted_pv", update.predicted_pv)
             .field("is_loadshedding", update.is_loadshedding);

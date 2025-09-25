@@ -49,7 +49,7 @@ max_discharge_power = 400
 
 # Maximum rate at which the battery can charge from the grid (W). It's
 # recommended to estimate this from measurements, because I've found that
-# using just the settings (max amps and battery voltage) gives as
+# using just the settings (max amps and battery voltage) gives an
 # overestimate.
 charge_power = 1800
 

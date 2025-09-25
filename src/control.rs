@@ -103,6 +103,14 @@ enum SimMode {
     Charge,
 }
 
+/// What to simulate when modelling export
+enum ExportMode {
+    /// Export first, including from the battery
+    Drain,
+    /// Export first, but do not export from battery
+    Hold,
+}
+
 fn target_soc_helper(
     config: &InverterConfig,
     state: &State,
@@ -183,7 +191,12 @@ fn target_socs(
     }
 }
 
-fn export_soc(config: &InverterConfig, info: &Info, now: DateTime<Utc>) -> f64 {
+fn export_soc_helper(
+    config: &InverterConfig,
+    info: &Info,
+    now: DateTime<Utc>,
+    mode: ExportMode,
+) -> f64 {
     // TODO: take load shedding into account (can't export during load shedding)
     let step = Duration::seconds(60);
     let step_h = duration_hours(step);
@@ -196,11 +209,19 @@ fn export_soc(config: &InverterConfig, info: &Info, now: DateTime<Utc>) -> f64 {
     while t < goal {
         let power = panels_power(&config.panels, t + step / 2) - config.min_discharge_power;
         let excess = power > info.export_power;
-        let power = if power < 0.0 {
-            power // Not generating enough - battery runs down
-        } else {
-            (power - info.export_power).max(0.0) // Export, and charge battery with leftover
+        let power = match mode {
+            ExportMode::Drain => power - info.export_power,
+            ExportMode::Hold => {
+                if power < 0.0 {
+                    power // Not generating enough - battery runs down
+                } else {
+                    (power - info.export_power).max(0.0) // Export, and charge battery with leftover
+                }
+            }
         };
+        // TODO: also need to clamp rate at which battery can deliver power.
+        // For now assume the battery can supply the maximum export power.
+        let power = power.min(info.charge_power);
         cur += power * step_h;
         peak = peak.max(cur);
         t += step;
@@ -212,6 +233,13 @@ fn export_soc(config: &InverterConfig, info: &Info, now: DateTime<Utc>) -> f64 {
     }
 
     (1.0 - peak / info.capacity) * 100.0
+}
+
+fn export_soc(config: &InverterConfig, info: &Info, now: DateTime<Utc>) -> (f64, f64) {
+    (
+        export_soc_helper(config, info, now, ExportMode::Hold),
+        export_soc_helper(config, info, now, ExportMode::Drain),
+    )
 }
 
 async fn update_soc(
@@ -234,20 +262,22 @@ async fn update_soc(
         let state = filter_state(guard, now - esp_timeout);
         let est_start = Instant::now();
         let (target_soc_low, target_soc_high, alarm_soc) = target_socs(config, state, &info, now);
-        let target_soc_export = export_soc(config, &info, now);
+        let (target_soc_export_low, target_soc_export_high) = export_soc(config, &info, now);
         info!(
-            "Target SoC range is {:.2} - {:.2} (alarm at {:.2}); export SoC {:.2}; computed in {:.3} s",
+            "Target SoC range is {:.2} - {:.2} (alarm at {:.2}); export range is {:.2} - {:.2}; computed in {:.3} s",
             target_soc_low,
             target_soc_high,
             alarm_soc,
-            target_soc_export,
+            target_soc_export_low,
+            target_soc_export_high,
             est_start.elapsed().as_secs_f64()
         );
         target = current_soc.min(target_soc_high).max(target_soc_low);
         full_export = if info.export_enabled {
-            let target_soc_export_clip = target_soc_export.max(target_soc_low);
-            if current_soc >= target_soc_export_clip && net_production > 0.0 {
-                target = target_soc_export_clip;
+            let low = target_soc_export_low.max(target_soc_low);
+            let high = target_soc_export_high.max(target_soc_high);
+            if current_soc >= high || (current_soc >= low && net_production > 0.0) {
+                target = target.max(current_soc.min(high));
                 Some(true)
             } else {
                 Some(false)
@@ -275,7 +305,8 @@ async fn update_soc(
             target_soc_low,
             target_soc_high,
             alarm_soc,
-            target_soc_export,
+            target_soc_export_low,
+            target_soc_export_high,
             current_soc,
             predicted_pv: panels_power(&config.panels, now),
             is_loadshedding,

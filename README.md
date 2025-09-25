@@ -97,12 +97,17 @@ forward until theoretical PV next moves from above to below the export limit
 (or 24 hours if it doesn't), and the maximum SoC (relative to now) is
 calculated under the assumption of maximum PV, `min_discharge_power`, and
 excess power going first to export and only to the battery when necessary.
-This will determine a SoC `target_soc_export` which is the maximum SoC we could
-have now and be guaranteed not to lose out on generation capacity. If we're at
-or above that SoC, it is at least `target_soc_low`, and PV currently exceeds
-load, then zero export is disabled and the minimum SoC is set to
-`export_limit_soc`. That allows for export from the battery if we're already
-above `export_limit_soc`.
+This will determine a SoC `target_soc_export_low` which is the maximum SoC we
+could have now and be guaranteed not to lose out on generation capacity if we
+don't export from the battery. Similarly, we compute `target_soc_export_high`
+which is the maximum SoC we could have now be guaranteed not to lose on
+generation capacity export from the battery is allowed. If we're above
+`target_soc_export_high`, we start exporting from the battery; otherwise, if
+we're above `target_soc_export_low` and have more PV than load, we export solar
+but do not export from the battery.
+
+These limits are clamped to be at least `target_soc_low` and `target_soc_high`,
+to avoid running the battery lower than the normal algorithm would do.
 
 ## Changelog
 
