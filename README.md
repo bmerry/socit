@@ -63,9 +63,9 @@ to avoid falling below the `minimum_soc` later (if possible).
 
 There are three SoC levels calculated. When above `target_soc_high`, no grid
 power is needed. Between `target_soc_low` and `target_soc_high`, grid power
-is used for the load, but the battery is not changed, while below
+is used for the load, but the battery is not charged, while below
 `target_soc_low`, the battery is charged as well. Finally, the value
-`alarm_soc` has no internal effect, but in stored in the database can be used
+`alarm_soc` has no internal effect, but in stored in the database and can be used
 by external alerting tools: if the actual SoC is below `alarm_soc`, then there
 is a risk of falling below `minimum_soc`.
 
@@ -84,7 +84,35 @@ Note that this works for me because the EMI consistently causes the coil to
 over-read. If it under-reads, this solution will not work for you because the
 trickle charge cannot be set to negative values.
 
+## Charge limiting
+
+When exporting solar electricity, the grid supplier may limit the amount of
+power exported. This can lead to lost opportunities if the battery is already
+full and hence there is nowhere to store the excess power. Socit can limit
+battery charging in the morning to leave storage space in the battery during
+peak hours.
+
+The algorithm for this works as follows. The change in the SoC is projected
+forward until theoretical PV next moves from above to below the export limit
+(or 24 hours if it doesn't), and the maximum SoC (relative to now) is
+calculated under the assumption of maximum PV, `min_discharge_power`, and
+excess power going first to export and only to the battery when necessary.
+This will determine a SoC `target_soc_export` which is the maximum SoC we could
+have now and be guaranteed not to lose out on generation capacity. If we're at
+or above that SoC, it is at least `target_soc_low`, and PV currently exceeds
+load, then zero export is disabled and the minimum SoC is set to
+`export_limit_soc`. That allows for export from the battery if we're already
+above `export_limit_soc`.
+
 ## Changelog
+
+### 0.4.0
+
+- Make `charge_power` required. The README previously claimed it would be
+  computed from inverter settings if not provided, but this wasn't implemented
+  properly.
+- If selling of excess solar is enabled on the inverter, automatically switch
+  zero export on or off to optimise generation.
 
 ### 0.3.2
 

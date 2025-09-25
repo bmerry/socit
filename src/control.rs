@@ -28,7 +28,7 @@ use tokio_stream::StreamMap;
 use tokio_util::sync::CancellationToken;
 
 use crate::config::{CoilConfig, Config, InverterConfig, PanelConfig};
-use crate::esp_api::{AreaResponse, API};
+use crate::esp_api::{API, AreaResponse};
 use crate::inverter::{Info, Inverter, Result};
 use crate::monitoring::{CoilUpdate, Monitor, SocUpdate};
 use crate::sun::solar_fraction;
@@ -141,15 +141,13 @@ fn target_soc_helper(
             }
         }
         let mut power = panels_power(&config.panels, t + step / 2);
-        if let Some(charge_power) = config.charge_power {
-            power = power.min(charge_power);
-        }
+        power = power.min(config.charge_power);
         power -= config.min_discharge_power;
         if have_grid {
             power = match mode {
                 SimMode::Drain => power,
                 SimMode::Hold => power.max(0.0),
-                SimMode::Charge => config.charge_power.unwrap_or(power),
+                SimMode::Charge => config.charge_power,
             };
         }
         base_wh += power * step_h;
@@ -185,6 +183,37 @@ fn target_socs(
     }
 }
 
+fn export_soc(config: &InverterConfig, info: &Info, now: DateTime<Utc>) -> f64 {
+    // TODO: take load shedding into account (can't export during load shedding)
+    let step = Duration::seconds(60);
+    let step_h = duration_hours(step);
+    let goal = now + Duration::seconds(86400);
+    let mut t = now;
+    let mut cur = 0.0f64;
+    let mut peak = 0.0f64;
+    let mut entered = false;
+
+    while t < goal {
+        let power = panels_power(&config.panels, t + step / 2) - config.min_discharge_power;
+        let excess = power > info.export_power;
+        let power = if power < 0.0 {
+            power // Not generating enough - battery runs down
+        } else {
+            (power - info.export_power).max(0.0) // Export, and charge battery with leftover
+        };
+        cur += power * step_h;
+        peak = peak.max(cur);
+        t += step;
+        if excess {
+            entered = true;
+        } else if entered {
+            break; // Reached the end of excess production for the day
+        }
+    }
+
+    (1.0 - peak / info.capacity) * 100.0
+}
+
 async fn update_soc(
     inverter: &mut dyn Inverter,
     config: &InverterConfig,
@@ -195,22 +224,37 @@ async fn update_soc(
     let now = Utc::now();
     let info = inverter.get_info().await?;
     let current_soc = inverter.get_soc().await?;
-    let target;
+    let net_production = inverter.get_net_production().await?;
+    let mut target;
     let update;
+    let full_export;
 
     {
         let guard = &state.lock().unwrap();
         let state = filter_state(guard, now - esp_timeout);
         let est_start = Instant::now();
         let (target_soc_low, target_soc_high, alarm_soc) = target_socs(config, state, &info, now);
+        let target_soc_export = export_soc(config, &info, now);
         info!(
-            "Target SoC range is {:.2} - {:.2} (alarm at {:.2}), computed in {:.3} s",
+            "Target SoC range is {:.2} - {:.2} (alarm at {:.2}); export SoC {:.2}; computed in {:.3} s",
             target_soc_low,
             target_soc_high,
             alarm_soc,
+            target_soc_export,
             est_start.elapsed().as_secs_f64()
         );
         target = current_soc.min(target_soc_high).max(target_soc_low);
+        full_export = if info.export_enabled {
+            let target_soc_export_clip = target_soc_export.max(target_soc_low);
+            if current_soc >= target_soc_export_clip && net_production > 0.0 {
+                target = target_soc_export_clip;
+                Some(true)
+            } else {
+                Some(false)
+            }
+        } else {
+            None
+        };
 
         let mut is_loadshedding = false;
         let mut next_change = None;
@@ -231,6 +275,7 @@ async fn update_soc(
             target_soc_low,
             target_soc_high,
             alarm_soc,
+            target_soc_export,
             current_soc,
             predicted_pv: panels_power(&config.panels, now),
             is_loadshedding,
@@ -238,7 +283,12 @@ async fn update_soc(
         };
     }
 
+    info!("Setting min SoC to {target:.2}");
     inverter.set_min_soc(target, config.fallback_soc).await?;
+    if let Some(full_export) = full_export {
+        info!("Setting full export to {full_export}");
+        inverter.set_full_export(full_export).await?;
+    }
     if let Err(err) = monitor.soc_update(update).await {
         warn!("Failed to update monitoring: {err}");
     }
@@ -345,13 +395,10 @@ impl<'a> CoilController<'a> {
         // Compute the sum if all elements are not None
         let sum = self.history.iter().cloned().sum::<Option<f64>>();
         let mean = sum.map(|x| x / (self.history.len() as f64));
-        let coil_active = info.map_or(false, |x| x.coil_active);
+        let coil_active = info.is_some_and(|x| x.coil_active);
         if coil_active {
             if let Some(target) = mean {
-                if self
-                    .last_setting
-                    .map_or(true, |x| (x - target).abs() >= 10.0)
-                {
+                if self.last_setting.is_none_or(|x| (x - target).abs() >= 10.0) {
                     info!("Setting trickle to {target}.");
                     inverter.set_trickle(target).await?;
                     self.last_setting = Some(target);

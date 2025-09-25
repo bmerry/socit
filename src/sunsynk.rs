@@ -1,4 +1,4 @@
-/* Copyright 2023-2024 Bruce Merry
+/* Copyright 2023-2025 Bruce Merry
  *
  * This program is free software: you can redistribute it and/or modify it
  * under the terms of the GNU General Public License as published by the Free
@@ -29,6 +29,7 @@ const NUM_PROGRAMS: usize = 6;
 const REG_CLOCK: u16 = 22;
 const REG_BATTERY_CAPACITY_AH: u16 = 204;
 const REG_BATTERY_RESTART_VOLTAGE: u16 = 221;
+const REG_BATTERY_POWER: u16 = 190; // positive for discharge
 const REG_GRID_CHARGE_CURRENT: u16 = 230;
 const REG_SOC: u16 = 184;
 const REG_PROGRAM_TIME: u16 = 250;
@@ -37,6 +38,8 @@ const REG_TRICKLE: u16 = 206;
 const REG_COIL_POWER: u16 = 172;
 const REG_INVERTER_POWER: u16 = 167;
 const REG_SYSTEM_MODE: u16 = 244;
+const REG_EXPORT_POWER: u16 = 245;
+const REG_EXPORT_ENABLED: u16 = 247;
 
 pub struct SunsynkInverter {
     ctx: Context,
@@ -216,14 +219,25 @@ impl Inverter for SunsynkInverter {
         // as good as any.
         let voltage = self.read_one(REG_BATTERY_RESTART_VOLTAGE).await? as f64 * 0.01;
         let charge_current = self.read_one(REG_GRID_CHARGE_CURRENT).await? as f64;
+        let export_power = self.read_one(REG_EXPORT_POWER).await? as f64;
+        let export_enabled = self.read_one(REG_EXPORT_ENABLED).await? != 0;
         Ok(Info {
             capacity: capacity_ah * voltage,
             charge_power: charge_current * voltage,
+            export_power,
+            export_enabled,
         })
     }
 
     async fn get_soc(&mut self) -> Result<f64> {
         Ok(self.read_one(REG_SOC).await? as f64)
+    }
+
+    async fn get_net_production(&mut self) -> Result<f64> {
+        let battery = self.read_one(REG_BATTERY_POWER).await? as i16 as f64;
+        // TODO: what if there isn't a coil?
+        let coil = self.read_one(REG_COIL_POWER).await? as i16 as f64;
+        Ok(-battery - coil)
     }
 
     async fn set_min_soc(&mut self, target: f64, fallback: f64) -> Result<()> {
@@ -255,5 +269,11 @@ impl Inverter for SunsynkInverter {
         let trickle = (trickle / 10.0).round() * 10.0; // UI only supports multiples of 10W
         let trickle = trickle.clamp(0.0, 32760.0).round() as u16;
         self.write(REG_TRICKLE, &[trickle, 0]).await
+    }
+
+    async fn set_full_export(&mut self, enable: bool) -> Result<()> {
+        // TODO check the settings!
+        let value = if enable { 0 } else { 2 };
+        self.write(REG_SYSTEM_MODE, &[value]).await
     }
 }
