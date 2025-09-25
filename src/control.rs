@@ -207,8 +207,9 @@ fn export_soc_helper(
     let mut entered = false;
 
     while t < goal {
-        let power = panels_power(&config.panels, t + step / 2) - config.min_discharge_power;
-        let excess = power > info.export_power;
+        let power = panels_power(&config.panels, t + step / 2);
+        let generating = power > 0.0;
+        let power = power - config.min_discharge_power;
         let power = match mode {
             ExportMode::Drain => power - info.export_power,
             ExportMode::Hold => {
@@ -225,10 +226,10 @@ fn export_soc_helper(
         cur += power * step_h;
         peak = peak.max(cur);
         t += step;
-        if excess {
+        if generating {
             entered = true;
         } else if entered {
-            break; // Reached the end of excess production for the day
+            break; // Reached the end of production for the day
         }
     }
 
