@@ -277,7 +277,12 @@ async fn update_soc(
         full_export = if info.export_enabled {
             let low = target_soc_export_low.max(target_soc_low);
             let high = target_soc_export_high.max(target_soc_high);
-            if current_soc >= high || (current_soc >= low && net_production > 0.0) {
+            // Turn off full-export when battery is full, because Sunsynk has
+            // a bug where non-essential loads count against export limit when
+            // full-export is enabled.
+            if current_soc < 99.0
+                && (current_soc >= high || (current_soc >= low && net_production > 0.0))
+            {
                 target = target.max(current_soc.min(high));
                 Some(true)
             } else {
