@@ -152,5 +152,10 @@ mod test {
             self.trickle = trickle;
             Ok(())
         }
+
+        async fn set_full_export(&mut self, _enable: bool) -> Result<()> {
+            self.check_inject_error()?;
+            Ok(())
+        }
     }
 }
