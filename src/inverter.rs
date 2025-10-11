@@ -19,12 +19,14 @@ use async_trait::async_trait;
 pub type Error = Box<dyn std::error::Error + Send + Sync>;
 pub type Result<T> = std::result::Result<T, Error>;
 
+#[derive(PartialEq, Debug)]
 pub struct Info {
     pub capacity: f64,     // Wh
     pub export_power: f64, // W
     pub export_enabled: bool,
 }
 
+#[derive(PartialEq, Debug)]
 pub struct CoilInfo {
     /// Reading at the CT coil (W) - positive for import from grid
     pub coil: f64,
@@ -93,24 +95,23 @@ pub(crate) mod test {
     use super::*;
     use async_trait::async_trait;
 
+    /// An inverter made available for test fixtures
+    #[derive(Default)]
     pub struct TestInverter {
         pub target_soc: f64,
         pub fallback_soc: f64,
         pub soc: f64,
         pub net_production: f64,
         pub trickle: f64,
+        pub full_export: bool,
         pub inject_error: Option<Error>, // Error returned on next call (one-shot)
     }
 
     impl TestInverter {
         pub fn new() -> Self {
             TestInverter {
-                target_soc: 0.0,
-                fallback_soc: 0.0,
                 soc: 75.0,
-                net_production: 0.0,
-                trickle: 0.0,
-                inject_error: None,
+                ..Default::default()
             }
         }
 
@@ -162,9 +163,47 @@ pub(crate) mod test {
             Ok(())
         }
 
-        async fn set_full_export(&mut self, _enable: bool) -> Result<()> {
+        async fn set_full_export(&mut self, enable: bool) -> Result<()> {
             self.check_inject_error()?;
+            self.full_export = enable;
             Ok(())
         }
+    }
+
+    #[tokio::test]
+    async fn test_dry_run_inverter() {
+        let mut base = TestInverter::new();
+        base.target_soc = 10.0;
+        base.fallback_soc = 20.0;
+        base.net_production = 200.0;
+        base.trickle = 40.0;
+        let mut inverter = DryrunInverter::new(base);
+        // Test getters
+        assert_eq!(
+            inverter.get_info().await.unwrap(),
+            Info {
+                capacity: 5000.0,
+                export_power: 3450.0,
+                export_enabled: true,
+            }
+        );
+        assert_eq!(inverter.get_soc().await.unwrap(), 75.0);
+        assert_eq!(inverter.get_net_production().await.unwrap(), 200.0);
+        assert_eq!(
+            inverter.get_coil().await.unwrap(),
+            Some(CoilInfo {
+                coil: 450.0,
+                inverter: 200.0,
+                coil_active: true
+            })
+        );
+        // Test that setters have no effect
+        inverter.set_min_soc(5.0, 6.0).await.unwrap();
+        assert_eq!(inverter.base.target_soc, 10.0);
+        assert_eq!(inverter.base.fallback_soc, 20.0);
+        inverter.set_trickle(100.0).await.unwrap();
+        assert_eq!(inverter.base.trickle, 40.0);
+        inverter.set_full_export(true).await.unwrap();
+        assert_eq!(inverter.base.full_export, false);
     }
 }
