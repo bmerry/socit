@@ -249,8 +249,8 @@ async fn update_soc(
     monitor: &mut dyn Monitor,
     state: &Mutex<Option<State>>,
     esp_timeout: Duration,
+    now: DateTime<Utc>,
 ) -> Result<()> {
-    let now = Utc::now();
     let info = inverter.get_info().await?;
     let current_soc = inverter.get_soc().await?;
     let net_production = inverter.get_net_production().await?;
@@ -336,7 +336,12 @@ async fn update_soc(
 #[async_trait]
 trait Controller: Send + Unpin {
     fn interval(&self) -> std::time::Duration;
-    async fn update(&mut self, inverter: &mut dyn Inverter, monitor: &mut dyn Monitor);
+    async fn update(
+        &mut self,
+        inverter: &mut dyn Inverter,
+        monitor: &mut dyn Monitor,
+        now: DateTime<Utc>,
+    );
     async fn shutdown(&mut self, inverter: &mut dyn Inverter);
 }
 
@@ -366,9 +371,21 @@ impl Controller for SocController<'_> {
         std::time::Duration::from_secs(60)
     }
 
-    async fn update(&mut self, inverter: &mut dyn Inverter, monitor: &mut dyn Monitor) {
-        if let Err(err) =
-            update_soc(inverter, self.config, monitor, self.state, self.esp_timeout).await
+    async fn update(
+        &mut self,
+        inverter: &mut dyn Inverter,
+        monitor: &mut dyn Monitor,
+        now: DateTime<Utc>,
+    ) {
+        if let Err(err) = update_soc(
+            inverter,
+            self.config,
+            monitor,
+            self.state,
+            self.esp_timeout,
+            now,
+        )
+        .await
         {
             warn!("Failed to update inverter: {err}");
         }
@@ -412,6 +429,7 @@ impl<'a> CoilController<'a> {
         &mut self,
         inverter: &mut dyn Inverter,
         monitor: &mut dyn Monitor,
+        now: DateTime<Utc>,
     ) -> Result<()> {
         let info = inverter.get_coil().await?;
         let mut target = None;
@@ -449,7 +467,7 @@ impl<'a> CoilController<'a> {
             info!("Not adjusting trickle because coil is not active.");
         }
         let update = CoilUpdate {
-            time: Utc::now(),
+            time: now,
             active: coil_active,
             target: mean,
             setting: self.last_setting,
@@ -467,8 +485,13 @@ impl Controller for CoilController<'_> {
         std::time::Duration::from_secs(10)
     }
 
-    async fn update(&mut self, inverter: &mut dyn Inverter, monitor: &mut dyn Monitor) {
-        match self.update_fallible(inverter, monitor).await {
+    async fn update(
+        &mut self,
+        inverter: &mut dyn Inverter,
+        monitor: &mut dyn Monitor,
+        now: DateTime<Utc>,
+    ) {
+        match self.update_fallible(inverter, monitor, now).await {
             Ok(_) => {}
             Err(err) => {
                 error!("Failed to update CT coil: {err}");
@@ -505,7 +528,7 @@ pub async fn control_inverter(
 
     loop {
         tokio::select! {
-            Some((idx, _)) = stream.next() => { controllers[idx].update(inverter, monitor).await; }
+            Some((idx, _)) = stream.next() => { controllers[idx].update(inverter, monitor, Utc::now()).await; }
             _ = token.cancelled() => { break; }
         }
     }
