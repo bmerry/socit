@@ -47,9 +47,10 @@ min_discharge_power = 100
 # means you should not include non-essential loads in this amount.
 max_discharge_power = 400
 
-# Maximum rate at which the battery can charge from the grid (W). If not
-# specified, it is calculated from the inverter settings; however, I've found
-# that this gives an over-estimate.
+# Maximum rate at which the battery can charge from the grid (W). It's
+# recommended to estimate this from measurements, because I've found that
+# using just the settings (max amps and battery voltage) gives an
+# overestimate.
 charge_power = 1800
 
 # Set to true to prevent actually changing any settings on the inverter

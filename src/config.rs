@@ -38,8 +38,7 @@ pub struct InverterConfig {
     pub fallback_soc: f64,
     pub min_discharge_power: f64,
     pub max_discharge_power: f64,
-    #[serde(default)]
-    pub charge_power: Option<f64>,
+    pub charge_power: f64,
     #[serde(default = "dry_run_default")]
     pub dry_run: bool,
     #[serde(default)]

@@ -1,4 +1,4 @@
-/* Copyright 2023-2024 Bruce Merry
+/* Copyright 2023-2025 Bruce Merry
  *
  * This program is free software: you can redistribute it and/or modify it
  * under the terms of the GNU General Public License as published by the Free
@@ -22,6 +22,8 @@ pub type Result<T> = std::result::Result<T, Error>;
 pub struct Info {
     pub capacity: f64,     // Wh
     pub charge_power: f64, // W
+    pub export_power: f64, // W
+    pub export_enabled: bool,
 }
 
 pub struct CoilInfo {
@@ -37,9 +39,12 @@ pub struct CoilInfo {
 pub trait Inverter: Send {
     async fn get_info(&mut self) -> Result<Info>;
     async fn get_soc(&mut self) -> Result<f64>;
-    async fn set_min_soc(&mut self, target: f64, fallback: f64) -> Result<()>;
     async fn get_coil(&mut self) -> Result<Option<CoilInfo>>;
+    /// Battery charge plus grid export (W)
+    async fn get_net_production(&mut self) -> Result<f64>;
+    async fn set_min_soc(&mut self, target: f64, fallback: f64) -> Result<()>;
     async fn set_trickle(&mut self, trickle: f64) -> Result<()>;
+    async fn set_full_export(&mut self, enable: bool) -> Result<()>;
 }
 
 /// Wrap another inverter class to turn set methods into nops
@@ -63,15 +68,23 @@ impl<T: Inverter> Inverter for DryrunInverter<T> {
         self.base.get_soc().await
     }
 
-    async fn set_min_soc(&mut self, _target: f64, _fallback: f64) -> Result<()> {
-        Ok(())
+    async fn get_net_production(&mut self) -> Result<f64> {
+        self.base.get_net_production().await
     }
 
     async fn get_coil(&mut self) -> Result<Option<CoilInfo>> {
         self.base.get_coil().await
     }
 
+    async fn set_min_soc(&mut self, _target: f64, _fallback: f64) -> Result<()> {
+        Ok(())
+    }
+
     async fn set_trickle(&mut self, _trickle: f64) -> Result<()> {
+        Ok(())
+    }
+
+    async fn set_full_export(&mut self, _enable: bool) -> Result<()> {
         Ok(())
     }
 }
@@ -85,6 +98,7 @@ mod test {
         pub target_soc: f64,
         pub fallback_soc: f64,
         pub soc: f64,
+        pub net_production: f64,
         pub trickle: f64,
         pub inject_error: Option<Error>, // Error returned on next call (one-shot)
     }
@@ -102,12 +116,19 @@ mod test {
             Ok(Info {
                 capacity: 5000.0,
                 charge_power: 2000.0,
+                export_power: 3450.0,
+                export_enabled: true,
             })
         }
 
         async fn get_soc(&mut self) -> Result<f64> {
             self.check_inject_error()?;
             Ok(self.soc)
+        }
+
+        async fn get_net_production(&mut self) -> Result<f64> {
+            self.check_inject_error()?;
+            Ok(self.net_production)
         }
 
         async fn set_min_soc(&mut self, target: f64, fallback: f64) -> Result<()> {
@@ -129,6 +150,11 @@ mod test {
         async fn set_trickle(&mut self, trickle: f64) -> Result<()> {
             self.check_inject_error()?;
             self.trickle = trickle;
+            Ok(())
+        }
+
+        async fn set_full_export(&mut self, _enable: bool) -> Result<()> {
+            self.check_inject_error()?;
             Ok(())
         }
     }

@@ -37,7 +37,7 @@ struct Args {
 
 #[cfg(unix)]
 async fn wait_shutdown() -> std::io::Result<()> {
-    use tokio::signal::unix::{signal, SignalKind};
+    use tokio::signal::unix::{SignalKind, signal};
     let mut sigint = signal(SignalKind::interrupt())?;
     let mut sigterm = signal(SignalKind::terminate())?;
     tokio::select! {
