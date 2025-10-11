@@ -89,11 +89,11 @@ impl<T: Inverter> Inverter for DryrunInverter<T> {
 }
 
 #[cfg(test)]
-mod test {
+pub(crate) mod test {
     use super::*;
     use async_trait::async_trait;
 
-    struct TestInverter {
+    pub struct TestInverter {
         pub target_soc: f64,
         pub fallback_soc: f64,
         pub soc: f64,
@@ -103,6 +103,17 @@ mod test {
     }
 
     impl TestInverter {
+        pub fn new() -> Self {
+            TestInverter {
+                target_soc: 25.0,
+                fallback_soc: 50.0,
+                soc: 75.0,
+                net_production: 0.0,
+                trickle: 0.0,
+                inject_error: None,
+            }
+        }
+
         fn check_inject_error(&mut self) -> Result<()> {
             self.inject_error.take().map_or(Ok(()), |err| Err(err))
         }

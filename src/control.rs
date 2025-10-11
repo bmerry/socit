@@ -537,3 +537,48 @@ pub async fn control_inverter(
         controller.shutdown(inverter).await;
     }
 }
+
+#[cfg(test)]
+mod test {
+    use chrono::{DateTime, Duration, Utc};
+    use std::sync::Mutex;
+
+    use super::{Controller, SocController};
+    use crate::config::InverterConfig;
+    use crate::inverter::test::TestInverter;
+    use crate::monitoring::NullMonitor;
+
+    fn inverter_config() -> InverterConfig {
+        InverterConfig {
+            device: "dummy".to_string(),
+            id: 1,
+            min_soc: 25.0,
+            fallback_soc: 50.0,
+            min_discharge_power: 100.0,
+            max_discharge_power: 1000.0,
+            charge_power: 2500.0,
+            dry_run: false,
+            panels: Vec::new(),
+        }
+    }
+
+    fn morning() -> DateTime<Utc> {
+        DateTime::parse_from_rfc3339("2025-10-11T08:00:00+02:00")
+            .unwrap()
+            .into()
+    }
+
+    /// Test that when no load-shedding data is available, the fallback SoC is used
+    #[tokio::test]
+    async fn test_soc_controller_fallback() {
+        let mut inverter = TestInverter::new();
+        let config = inverter_config();
+        let state_mutex = Mutex::new(None);
+        let mut controller = SocController::new(&config, &state_mutex, Duration::seconds(3600));
+        let mut monitor = NullMonitor {};
+        controller
+            .update(&mut inverter, &mut monitor, morning())
+            .await;
+        assert_eq!(inverter.target_soc, 50.0);
+    }
+}
