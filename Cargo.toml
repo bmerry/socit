@@ -16,7 +16,7 @@
 
 [package]
 name = "socit"
-version = "0.3.2"
+version = "0.4.0"
 edition = "2024"
 authors = ["Bruce Merry"]
 license = "GPL-3.0-or-later"
