@@ -222,7 +222,7 @@ fn export_soc_helper(
         };
         // TODO: also need to clamp rate at which battery can deliver power.
         // For now assume the battery can supply the maximum export power.
-        let power = power.min(info.charge_power);
+        let power = power.min(config.charge_power);
         cur += power * step_h;
         peak = peak.max(cur);
         t += step;

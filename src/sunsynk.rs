@@ -30,7 +30,7 @@ const REG_CLOCK: u16 = 22;
 const REG_BATTERY_CAPACITY_AH: u16 = 204;
 const REG_BATTERY_RESTART_VOLTAGE: u16 = 221;
 const REG_BATTERY_POWER: u16 = 190; // positive for discharge
-const REG_GRID_CHARGE_CURRENT: u16 = 230;
+// const REG_GRID_CHARGE_CURRENT: u16 = 230;
 const REG_SOC: u16 = 184;
 const REG_PROGRAM_TIME: u16 = 250;
 const REG_PROGRAM_SOC: u16 = 268;
@@ -218,12 +218,10 @@ impl Inverter for SunsynkInverter {
         // There are many voltages (low, restart, equalisation, float... this one seems
         // as good as any.
         let voltage = self.read_one(REG_BATTERY_RESTART_VOLTAGE).await? as f64 * 0.01;
-        let charge_current = self.read_one(REG_GRID_CHARGE_CURRENT).await? as f64;
         let export_power = self.read_one(REG_EXPORT_POWER).await? as f64;
         let export_enabled = self.read_one(REG_EXPORT_ENABLED).await? != 0;
         Ok(Info {
             capacity: capacity_ah * voltage,
-            charge_power: charge_current * voltage,
             export_power,
             export_enabled,
         })

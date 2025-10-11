@@ -21,7 +21,6 @@ pub type Result<T> = std::result::Result<T, Error>;
 
 pub struct Info {
     pub capacity: f64,     // Wh
-    pub charge_power: f64, // W
     pub export_power: f64, // W
     pub export_enabled: bool,
 }
@@ -115,7 +114,6 @@ mod test {
             self.check_inject_error()?;
             Ok(Info {
                 capacity: 5000.0,
-                charge_power: 2000.0,
                 export_power: 3450.0,
                 export_enabled: true,
             })
