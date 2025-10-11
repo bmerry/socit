@@ -16,6 +16,7 @@
 
 use clap::Parser;
 use log::info;
+use radians::Deg64;
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 use tokio_util::sync::CancellationToken;
@@ -26,6 +27,7 @@ use socit::esp_api::API;
 use socit::influxdb2::Influxdb2Monitor;
 use socit::inverter::{DryrunInverter, Inverter};
 use socit::monitoring::{Monitor, NullMonitor};
+use socit::sun::{ArraySolarPredictor, PanelSolarPredictor};
 use socit::sunsynk::SunsynkInverter;
 
 #[derive(Parser)]
@@ -89,12 +91,28 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         Some(conf) => Box::new(Influxdb2Monitor::new(conf).await),
         None => Box::new(NullMonitor {}),
     };
+    let panel_predictors: Vec<_> = config
+        .inverter
+        .panels
+        .iter()
+        .map(|x| {
+            PanelSolarPredictor::new(
+                Deg64::new(x.latitude),
+                Deg64::new(x.longitude),
+                Deg64::new(90.0 - x.tilt),
+                Deg64::new(x.azimuth),
+                x.power,
+            )
+        })
+        .collect();
+    let predictor = ArraySolarPredictor::new(panel_predictors);
     let control_handle = tokio::spawn(async move {
         // Give poll_esp some time to load the first set of information
         tokio::time::sleep(std::time::Duration::from_secs(5)).await;
         control::control_inverter(
             inverter.as_mut(),
             &config,
+            &predictor,
             &mut *monitor,
             &state2,
             esp_timeout,

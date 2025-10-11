@@ -105,8 +105,8 @@ pub(crate) mod test {
     impl TestInverter {
         pub fn new() -> Self {
             TestInverter {
-                target_soc: 25.0,
-                fallback_soc: 50.0,
+                target_soc: 0.0,
+                fallback_soc: 0.0,
                 soc: 75.0,
                 net_production: 0.0,
                 trickle: 0.0,
