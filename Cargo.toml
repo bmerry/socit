@@ -45,4 +45,4 @@ tokio-modbus = { version = "0.16.0", default-features = false, features = ["rtu"
 tokio-serial = "5.4.4"
 tokio-stream = "0.1.17"
 tokio-util = { version = "0.7.8", default-features = false }
-toml = { version = "0.8.19", default-features = false, features = ["parse"] }
+toml = { version = "0.9.8", default-features = false, features = ["parse", "serde", "std"] }
