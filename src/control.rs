@@ -134,8 +134,8 @@ fn target_soc_helper(
             }
         }
         let mut power = predictor.power(&(t + step / 2));
-        power = power.min(config.charge_power);
         power -= config.min_discharge_power;
+        power = power.min(config.charge_power);
         if have_grid {
             power = match mode {
                 SimMode::Drain => power,
