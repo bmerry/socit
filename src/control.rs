@@ -544,7 +544,7 @@ pub async fn control_inverter(
 
 #[cfg(test)]
 mod test {
-    use chrono::{DateTime, Duration, NaiveTime, Utc};
+    use chrono::{DateTime, Duration, NaiveDate, NaiveTime, Utc};
     use std::sync::Mutex;
 
     use super::{Controller, SocController, State};
@@ -562,9 +562,9 @@ mod test {
             id: 1,
             min_soc: 25.0,
             fallback_soc: 50.0,
-            min_discharge_power: 100.0,
-            max_discharge_power: 1000.0,
-            charge_power: 2500.0,
+            min_discharge_power: 100.0,  // 2% per hour
+            max_discharge_power: 1000.0, // 20% per hour
+            charge_power: 2500.0,        // 50% per hour
             dry_run: false,
             panels: Vec::new(),
         }
@@ -586,10 +586,30 @@ mod test {
         }
     }
 
-    fn morning() -> DateTime<Utc> {
-        DateTime::parse_from_rfc3339("2025-10-11T06:00:00+00:00")
+    /// Fixture with a single loadshedding window
+    fn response_loadshedding1(
+        start_hour: u32,
+        start_min: u32,
+        start_sec: u32,
+        end_hour: u32,
+        end_min: u32,
+        end_sec: u32,
+    ) -> AreaResponse {
+        let mut response = response_no_loadshedding();
+        response.events.push(crate::esp_api::Event {
+            start: hms(start_hour, start_min, start_sec),
+            end: hms(end_hour, end_min, end_sec),
+            note: "".to_string(),
+        });
+        response
+    }
+
+    fn hms(hour: u32, min: u32, sec: u32) -> DateTime<Utc> {
+        NaiveDate::from_ymd_opt(2025, 10, 11)
             .unwrap()
-            .into()
+            .and_hms_opt(hour, min, sec)
+            .unwrap()
+            .and_utc()
     }
 
     fn predictor() -> impl SolarPredictor<Utc> {
@@ -612,16 +632,17 @@ mod test {
             SocController::new(&config, &predictor, &state_mutex, Duration::seconds(3600));
         let mut monitor = NullMonitor {};
         controller
-            .update(&mut inverter, &mut monitor, morning())
+            .update(&mut inverter, &mut monitor, hms(6, 0, 0))
             .await;
         assert_eq!(inverter.target_soc, 50.0);
     }
 
+    /// Test that min SoC ramps down towards the start of sunlight
     #[tokio::test]
-    async fn test_soc_controller_no_loadshedding() {
+    async fn test_soc_controller_rampdown() {
         let mut inverter = TestInverter::new();
         let config = inverter_config();
-        let now = morning();
+        let now = hms(6, 0, 0);
         let state_mutex = Mutex::new(Some(State {
             response: response_no_loadshedding(),
             time: now,
@@ -633,5 +654,36 @@ mod test {
         controller.update(&mut inverter, &mut monitor, now).await;
         // 3 hours until the solar switches on, at 100W (2% per hour)
         assert_eq!(inverter.target_soc, 31.0);
+    }
+
+    /// Test that load-shedding ramps up the min SoC prior to load-shedding
+    #[tokio::test]
+    async fn test_soc_loadshedding() {
+        let mut inverter = TestInverter::new();
+        let config = inverter_config();
+        let state_mutex = Mutex::new(Some(State {
+            response: response_loadshedding1(10, 0, 0, 12, 0, 0),
+            time: hms(0, 0, 0),
+        }));
+        let predictor = predictor();
+        let mut controller =
+            SocController::new(&config, &predictor, &state_mutex, Duration::seconds(86400));
+        let mut monitor = NullMonitor {};
+        // We could use up to 40% during loadshedding (20%/h for 2h), and want
+        // to end with 25%, so we need to start load-shedding at 65%.
+        controller
+            .update(&mut inverter, &mut monitor, hms(10, 0, 0))
+            .await;
+        assert_eq!(inverter.target_soc, 65.0);
+        // We charge at 50% per hour, so 0.5h earlier we must be at 40%.
+        controller
+            .update(&mut inverter, &mut monitor, hms(9, 30, 0))
+            .await;
+        assert_eq!(inverter.target_soc, 40.0);
+        // As load shedding progresses, we need to preserve less
+        controller
+            .update(&mut inverter, &mut monitor, hms(11, 0, 0))
+            .await;
+        assert_eq!(inverter.target_soc, 45.0);
     }
 }
