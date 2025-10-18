@@ -46,3 +46,6 @@ tokio-serial = "5.4.4"
 tokio-stream = "0.1.17"
 tokio-util = { version = "0.7.8", default-features = false }
 toml = { version = "0.9.8", default-features = false, features = ["parse", "serde", "std"] }
+
+[dev-dependencies]
+approx = "0.5.1"

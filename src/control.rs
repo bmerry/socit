@@ -544,6 +544,7 @@ pub async fn control_inverter(
 
 #[cfg(test)]
 mod test {
+    use approx::assert_relative_eq;
     use chrono::{DateTime, Duration, NaiveDate, NaiveTime, Utc};
     use std::sync::Mutex;
 
@@ -651,9 +652,13 @@ mod test {
         let mut controller =
             SocController::new(&config, &predictor, &state_mutex, Duration::seconds(3600));
         let mut monitor = NullMonitor {};
-        controller.update(&mut inverter, &mut monitor, now).await;
         // 3 hours until the solar switches on, at 100W (2% per hour)
+        controller.update(&mut inverter, &mut monitor, now).await;
         assert_eq!(inverter.target_soc, 31.0);
+        // Ensure it doesn't charge up to this level if already below
+        inverter.soc = 28.0;
+        controller.update(&mut inverter, &mut monitor, now).await;
+        assert_eq!(inverter.target_soc, 28.0);
     }
 
     /// Test that load-shedding ramps up the min SoC prior to load-shedding
@@ -685,5 +690,43 @@ mod test {
             .update(&mut inverter, &mut monitor, hms(11, 0, 0))
             .await;
         assert_eq!(inverter.target_soc, 45.0);
+    }
+
+    /// Test that we sell remaining battery if needed to make room for charging
+    #[tokio::test]
+    async fn test_sell_battery() {
+        let mut inverter = TestInverter::new();
+        // Solar model is 3kW output, so this leaves us with 500W excess (after
+        // the 100W minimum load) we want to store, or 10%/h, over 6h, for 60%.
+        inverter.info.export_power = 2400.0;
+        let config = inverter_config();
+        let state_mutex = Mutex::new(Some(State {
+            response: response_no_loadshedding(),
+            time: hms(0, 0, 0),
+        }));
+        let predictor = predictor();
+        let mut controller =
+            SocController::new(&config, &predictor, &state_mutex, Duration::seconds(86400));
+        let mut monitor = NullMonitor {};
+
+        controller
+            .update(&mut inverter, &mut monitor, hms(9, 0, 0))
+            .await;
+        assert_eq!(inverter.full_export, true);
+        assert_relative_eq!(inverter.target_soc, 40.0, epsilon = 1e-9);
+
+        // We can only guarantee draining the battery at 50%/h
+        controller
+            .update(&mut inverter, &mut monitor, hms(8, 30, 0))
+            .await;
+        assert_eq!(inverter.full_export, true);
+        assert_relative_eq!(inverter.target_soc, 65.0, epsilon = 1e-9);
+
+        // If the battery is already below the target, do not try to export
+        controller
+            .update(&mut inverter, &mut monitor, hms(8, 0, 0))
+            .await;
+        assert_eq!(inverter.full_export, false);
+        assert_relative_eq!(inverter.target_soc, 27.0, epsilon = 1e-9);
     }
 }

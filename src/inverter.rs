@@ -19,7 +19,7 @@ use async_trait::async_trait;
 pub type Error = Box<dyn std::error::Error + Send + Sync>;
 pub type Result<T> = std::result::Result<T, Error>;
 
-#[derive(PartialEq, Debug)]
+#[derive(PartialEq, Debug, Clone, Default)]
 pub struct Info {
     pub capacity: f64,     // Wh
     pub export_power: f64, // W
@@ -98,6 +98,7 @@ pub(crate) mod test {
     /// An inverter made available for test fixtures
     #[derive(Default)]
     pub struct TestInverter {
+        pub info: Info,
         pub target_soc: f64,
         pub fallback_soc: f64,
         pub soc: f64,
@@ -110,6 +111,11 @@ pub(crate) mod test {
     impl TestInverter {
         pub fn new() -> Self {
             TestInverter {
+                info: Info {
+                    capacity: 5000.0,
+                    export_power: 3450.0,
+                    export_enabled: true,
+                },
                 soc: 75.0,
                 ..Default::default()
             }
@@ -124,11 +130,7 @@ pub(crate) mod test {
     impl Inverter for TestInverter {
         async fn get_info(&mut self) -> Result<Info> {
             self.check_inject_error()?;
-            Ok(Info {
-                capacity: 5000.0,
-                export_power: 3450.0,
-                export_enabled: true,
-            })
+            Ok(self.info.clone())
         }
 
         async fn get_soc(&mut self) -> Result<f64> {
