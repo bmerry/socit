@@ -18,7 +18,6 @@ use async_trait::async_trait;
 use chrono::{DateTime, Duration, Utc};
 use futures::StreamExt;
 use log::{error, info, warn};
-use radians::Deg64;
 use std::cmp::min;
 use std::collections::VecDeque;
 use std::sync::Mutex;
@@ -27,11 +26,11 @@ use tokio::time::MissedTickBehavior;
 use tokio_stream::StreamMap;
 use tokio_util::sync::CancellationToken;
 
-use crate::config::{CoilConfig, Config, InverterConfig, PanelConfig};
+use crate::config::{CoilConfig, Config, InverterConfig};
 use crate::esp_api::{API, AreaResponse};
 use crate::inverter::{Info, Inverter, Result};
 use crate::monitoring::{CoilUpdate, Monitor, SocUpdate};
-use crate::sun::solar_fraction;
+use crate::sun::SolarPredictor;
 
 pub struct State {
     pub response: AreaResponse,
@@ -78,21 +77,6 @@ fn duration_hours(duration: Duration) -> f64 {
     (duration.num_milliseconds() as f64) / 3600000.0
 }
 
-fn panels_power(panels: &[PanelConfig], time: DateTime<Utc>) -> f64 {
-    let mut power = 0.0;
-    for panels in panels.iter() {
-        power += panels.power
-            * solar_fraction(
-                Deg64::new(panels.latitude),
-                Deg64::new(panels.longitude),
-                Deg64::new(90.0 - panels.tilt),
-                Deg64::new(panels.azimuth),
-                &time,
-            );
-    }
-    power
-}
-
 /// What to simulate when no load-shedding and not enough solar
 enum SimMode {
     /// Power drains from battery
@@ -113,6 +97,7 @@ enum ExportMode {
 
 fn target_soc_helper(
     config: &InverterConfig,
+    predictor: &dyn SolarPredictor<Utc>,
     state: &State,
     info: &Info,
     now: DateTime<Utc>,
@@ -148,9 +133,9 @@ fn target_soc_helper(
                 observe(end_wh.max(floor), t);
             }
         }
-        let mut power = panels_power(&config.panels, t + step / 2);
-        power = power.min(config.charge_power);
+        let mut power = predictor.power(&(t + step / 2));
         power -= config.min_discharge_power;
+        power = power.min(config.charge_power);
         if have_grid {
             power = match mode {
                 SimMode::Drain => power,
@@ -173,6 +158,7 @@ fn target_soc_helper(
 
 fn target_socs(
     config: &InverterConfig,
+    predictor: &dyn SolarPredictor<Utc>,
     state: Option<&State>,
     info: &Info,
     now: DateTime<Utc>,
@@ -183,9 +169,12 @@ fn target_socs(
             for event in state.response.events.iter() {
                 info!("Load-shedding from {} to {}", event.start, event.end);
             }
-            let (target_high, _) = target_soc_helper(config, state, info, now, SimMode::Drain);
-            let (target_low, _) = target_soc_helper(config, state, info, now, SimMode::Hold);
-            let (alarm, _) = target_soc_helper(config, state, info, now, SimMode::Charge);
+            let (target_high, _) =
+                target_soc_helper(config, predictor, state, info, now, SimMode::Drain);
+            let (target_low, _) =
+                target_soc_helper(config, predictor, state, info, now, SimMode::Hold);
+            let (alarm, _) =
+                target_soc_helper(config, predictor, state, info, now, SimMode::Charge);
             (target_low, target_high, alarm)
         }
     }
@@ -193,6 +182,7 @@ fn target_socs(
 
 fn export_soc_helper(
     config: &InverterConfig,
+    predictor: &dyn SolarPredictor<Utc>,
     info: &Info,
     now: DateTime<Utc>,
     mode: ExportMode,
@@ -207,7 +197,7 @@ fn export_soc_helper(
     let mut entered = false;
 
     while t < goal {
-        let power = panels_power(&config.panels, t + step / 2);
+        let power = predictor.power(&(t + step / 2));
         let generating = power > 0.0;
         let power = power - config.min_discharge_power;
         let power = match mode {
@@ -236,21 +226,27 @@ fn export_soc_helper(
     (1.0 - peak / info.capacity) * 100.0
 }
 
-fn export_soc(config: &InverterConfig, info: &Info, now: DateTime<Utc>) -> (f64, f64) {
+fn export_soc(
+    config: &InverterConfig,
+    predictor: &dyn SolarPredictor<Utc>,
+    info: &Info,
+    now: DateTime<Utc>,
+) -> (f64, f64) {
     (
-        export_soc_helper(config, info, now, ExportMode::Hold),
-        export_soc_helper(config, info, now, ExportMode::Drain),
+        export_soc_helper(config, predictor, info, now, ExportMode::Hold),
+        export_soc_helper(config, predictor, info, now, ExportMode::Drain),
     )
 }
 
 async fn update_soc(
     inverter: &mut dyn Inverter,
     config: &InverterConfig,
+    predictor: &dyn SolarPredictor<Utc>,
     monitor: &mut dyn Monitor,
     state: &Mutex<Option<State>>,
     esp_timeout: Duration,
+    now: DateTime<Utc>,
 ) -> Result<()> {
-    let now = Utc::now();
     let info = inverter.get_info().await?;
     let current_soc = inverter.get_soc().await?;
     let net_production = inverter.get_net_production().await?;
@@ -262,8 +258,10 @@ async fn update_soc(
         let guard = &state.lock().unwrap();
         let state = filter_state(guard, now - esp_timeout);
         let est_start = Instant::now();
-        let (target_soc_low, target_soc_high, alarm_soc) = target_socs(config, state, &info, now);
-        let (target_soc_export_low, target_soc_export_high) = export_soc(config, &info, now);
+        let (target_soc_low, target_soc_high, alarm_soc) =
+            target_socs(config, predictor, state, &info, now);
+        let (target_soc_export_low, target_soc_export_high) =
+            export_soc(config, predictor, &info, now);
         info!(
             "Target SoC range is {:.2} - {:.2} (alarm at {:.2}); export range is {:.2} - {:.2}; computed in {:.3} s",
             target_soc_low,
@@ -314,7 +312,7 @@ async fn update_soc(
             target_soc_export_low,
             target_soc_export_high,
             current_soc,
-            predicted_pv: panels_power(&config.panels, now),
+            predicted_pv: predictor.power(&now),
             is_loadshedding,
             next_change,
         };
@@ -336,12 +334,18 @@ async fn update_soc(
 #[async_trait]
 trait Controller: Send + Unpin {
     fn interval(&self) -> std::time::Duration;
-    async fn update(&mut self, inverter: &mut dyn Inverter, monitor: &mut dyn Monitor);
+    async fn update(
+        &mut self,
+        inverter: &mut dyn Inverter,
+        monitor: &mut dyn Monitor,
+        now: DateTime<Utc>,
+    );
     async fn shutdown(&mut self, inverter: &mut dyn Inverter);
 }
 
 struct SocController<'a> {
     config: &'a InverterConfig,
+    predictor: &'a dyn SolarPredictor<Utc>,
     state: &'a Mutex<Option<State>>,
     esp_timeout: Duration,
 }
@@ -349,11 +353,13 @@ struct SocController<'a> {
 impl<'a> SocController<'a> {
     fn new(
         config: &'a InverterConfig,
+        predictor: &'a dyn SolarPredictor<Utc>,
         state: &'a Mutex<Option<State>>,
         esp_timeout: Duration,
     ) -> Self {
         Self {
             config,
+            predictor,
             state,
             esp_timeout,
         }
@@ -366,9 +372,22 @@ impl Controller for SocController<'_> {
         std::time::Duration::from_secs(60)
     }
 
-    async fn update(&mut self, inverter: &mut dyn Inverter, monitor: &mut dyn Monitor) {
-        if let Err(err) =
-            update_soc(inverter, self.config, monitor, self.state, self.esp_timeout).await
+    async fn update(
+        &mut self,
+        inverter: &mut dyn Inverter,
+        monitor: &mut dyn Monitor,
+        now: DateTime<Utc>,
+    ) {
+        if let Err(err) = update_soc(
+            inverter,
+            self.config,
+            self.predictor,
+            monitor,
+            self.state,
+            self.esp_timeout,
+            now,
+        )
+        .await
         {
             warn!("Failed to update inverter: {err}");
         }
@@ -412,6 +431,7 @@ impl<'a> CoilController<'a> {
         &mut self,
         inverter: &mut dyn Inverter,
         monitor: &mut dyn Monitor,
+        now: DateTime<Utc>,
     ) -> Result<()> {
         let info = inverter.get_coil().await?;
         let mut target = None;
@@ -449,7 +469,7 @@ impl<'a> CoilController<'a> {
             info!("Not adjusting trickle because coil is not active.");
         }
         let update = CoilUpdate {
-            time: Utc::now(),
+            time: now,
             active: coil_active,
             target: mean,
             setting: self.last_setting,
@@ -467,8 +487,13 @@ impl Controller for CoilController<'_> {
         std::time::Duration::from_secs(10)
     }
 
-    async fn update(&mut self, inverter: &mut dyn Inverter, monitor: &mut dyn Monitor) {
-        match self.update_fallible(inverter, monitor).await {
+    async fn update(
+        &mut self,
+        inverter: &mut dyn Inverter,
+        monitor: &mut dyn Monitor,
+        now: DateTime<Utc>,
+    ) {
+        match self.update_fallible(inverter, monitor, now).await {
             Ok(_) => {}
             Err(err) => {
                 error!("Failed to update CT coil: {err}");
@@ -482,6 +507,7 @@ impl Controller for CoilController<'_> {
 pub async fn control_inverter(
     inverter: &mut dyn Inverter,
     config: &Config,
+    predictor: &dyn SolarPredictor<Utc>,
     monitor: &mut dyn Monitor,
     state: &Mutex<Option<State>>,
     esp_timeout: Duration,
@@ -490,6 +516,7 @@ pub async fn control_inverter(
     let mut controllers: Vec<Box<dyn Controller>> = Vec::new();
     controllers.push(Box::new(SocController::new(
         &config.inverter,
+        predictor,
         state,
         esp_timeout,
     )));
@@ -505,12 +532,201 @@ pub async fn control_inverter(
 
     loop {
         tokio::select! {
-            Some((idx, _)) = stream.next() => { controllers[idx].update(inverter, monitor).await; }
+            Some((idx, _)) = stream.next() => { controllers[idx].update(inverter, monitor, Utc::now()).await; }
             _ = token.cancelled() => { break; }
         }
     }
 
     for controller in controllers.iter_mut() {
         controller.shutdown(inverter).await;
+    }
+}
+
+#[cfg(test)]
+mod test {
+    use approx::assert_relative_eq;
+    use chrono::{DateTime, Duration, NaiveDate, NaiveTime, Utc};
+    use std::sync::Mutex;
+
+    use super::{Controller, SocController, State};
+    use crate::config::InverterConfig;
+    use crate::esp_api::AreaResponse;
+    use crate::inverter::test::TestInverter;
+    use crate::monitoring::NullMonitor;
+    use crate::sun::SolarPredictor;
+    use crate::sun::test::LinearSolarPredictor;
+
+    /// Inverter fixture, with no panels
+    fn inverter_config() -> InverterConfig {
+        InverterConfig {
+            device: "dummy".to_string(),
+            id: 1,
+            min_soc: 25.0,
+            fallback_soc: 50.0,
+            min_discharge_power: 100.0,  // 2% per hour
+            max_discharge_power: 1000.0, // 20% per hour
+            charge_power: 2500.0,        // 50% per hour
+            dry_run: false,
+            panels: Vec::new(),
+        }
+    }
+
+    /// Fixture with no loadshedding
+    fn response_no_loadshedding() -> AreaResponse {
+        use crate::esp_api::{Info, Schedule};
+        AreaResponse {
+            events: Vec::new(),
+            info: Info {
+                name: "here".to_string(),
+                region: "region".to_string(),
+            },
+            schedule: Schedule {
+                days: Vec::new(),
+                source: "data".to_string(),
+            },
+        }
+    }
+
+    /// Fixture with a single loadshedding window
+    fn response_loadshedding1(
+        start_hour: u32,
+        start_min: u32,
+        start_sec: u32,
+        end_hour: u32,
+        end_min: u32,
+        end_sec: u32,
+    ) -> AreaResponse {
+        let mut response = response_no_loadshedding();
+        response.events.push(crate::esp_api::Event {
+            start: hms(start_hour, start_min, start_sec),
+            end: hms(end_hour, end_min, end_sec),
+            note: "".to_string(),
+        });
+        response
+    }
+
+    fn hms(hour: u32, min: u32, sec: u32) -> DateTime<Utc> {
+        NaiveDate::from_ymd_opt(2025, 10, 11)
+            .unwrap()
+            .and_hms_opt(hour, min, sec)
+            .unwrap()
+            .and_utc()
+    }
+
+    fn predictor() -> impl SolarPredictor<Utc> {
+        LinearSolarPredictor::new(
+            NaiveTime::from_hms_opt(9, 0, 0).unwrap(),
+            NaiveTime::from_hms_opt(15, 0, 0).unwrap(),
+            3000.0,
+            3000.0,
+        )
+    }
+
+    /// Test that when no load-shedding data is available, the fallback SoC is used
+    #[tokio::test]
+    async fn test_soc_controller_fallback() {
+        let mut inverter = TestInverter::new();
+        let config = inverter_config();
+        let state_mutex = Mutex::new(None);
+        let predictor = predictor();
+        let mut controller =
+            SocController::new(&config, &predictor, &state_mutex, Duration::seconds(3600));
+        let mut monitor = NullMonitor {};
+        controller
+            .update(&mut inverter, &mut monitor, hms(6, 0, 0))
+            .await;
+        assert_eq!(inverter.target_soc, 50.0);
+    }
+
+    /// Test that min SoC ramps down towards the start of sunlight
+    #[tokio::test]
+    async fn test_soc_controller_rampdown() {
+        let mut inverter = TestInverter::new();
+        let config = inverter_config();
+        let now = hms(6, 0, 0);
+        let state_mutex = Mutex::new(Some(State {
+            response: response_no_loadshedding(),
+            time: now,
+        }));
+        let predictor = predictor();
+        let mut controller =
+            SocController::new(&config, &predictor, &state_mutex, Duration::seconds(3600));
+        let mut monitor = NullMonitor {};
+        // 3 hours until the solar switches on, at 100W (2% per hour)
+        controller.update(&mut inverter, &mut monitor, now).await;
+        assert_eq!(inverter.target_soc, 31.0);
+        // Ensure it doesn't charge up to this level if already below
+        inverter.soc = 28.0;
+        controller.update(&mut inverter, &mut monitor, now).await;
+        assert_eq!(inverter.target_soc, 28.0);
+    }
+
+    /// Test that load-shedding ramps up the min SoC prior to load-shedding
+    #[tokio::test]
+    async fn test_soc_loadshedding() {
+        let mut inverter = TestInverter::new();
+        let config = inverter_config();
+        let state_mutex = Mutex::new(Some(State {
+            response: response_loadshedding1(10, 0, 0, 12, 0, 0),
+            time: hms(0, 0, 0),
+        }));
+        let predictor = predictor();
+        let mut controller =
+            SocController::new(&config, &predictor, &state_mutex, Duration::seconds(86400));
+        let mut monitor = NullMonitor {};
+        // We could use up to 40% during loadshedding (20%/h for 2h), and want
+        // to end with 25%, so we need to start load-shedding at 65%.
+        controller
+            .update(&mut inverter, &mut monitor, hms(10, 0, 0))
+            .await;
+        assert_eq!(inverter.target_soc, 65.0);
+        // We charge at 50% per hour, so 0.5h earlier we must be at 40%.
+        controller
+            .update(&mut inverter, &mut monitor, hms(9, 30, 0))
+            .await;
+        assert_eq!(inverter.target_soc, 40.0);
+        // As load shedding progresses, we need to preserve less
+        controller
+            .update(&mut inverter, &mut monitor, hms(11, 0, 0))
+            .await;
+        assert_eq!(inverter.target_soc, 45.0);
+    }
+
+    /// Test that we sell remaining battery if needed to make room for charging
+    #[tokio::test]
+    async fn test_sell_battery() {
+        let mut inverter = TestInverter::new();
+        // Solar model is 3kW output, so this leaves us with 500W excess (after
+        // the 100W minimum load) we want to store, or 10%/h, over 6h, for 60%.
+        inverter.info.export_power = 2400.0;
+        let config = inverter_config();
+        let state_mutex = Mutex::new(Some(State {
+            response: response_no_loadshedding(),
+            time: hms(0, 0, 0),
+        }));
+        let predictor = predictor();
+        let mut controller =
+            SocController::new(&config, &predictor, &state_mutex, Duration::seconds(86400));
+        let mut monitor = NullMonitor {};
+
+        controller
+            .update(&mut inverter, &mut monitor, hms(9, 0, 0))
+            .await;
+        assert_eq!(inverter.full_export, true);
+        assert_relative_eq!(inverter.target_soc, 40.0, epsilon = 1e-9);
+
+        // We can only guarantee draining the battery at 50%/h
+        controller
+            .update(&mut inverter, &mut monitor, hms(8, 30, 0))
+            .await;
+        assert_eq!(inverter.full_export, true);
+        assert_relative_eq!(inverter.target_soc, 65.0, epsilon = 1e-9);
+
+        // If the battery is already below the target, do not try to export
+        controller
+            .update(&mut inverter, &mut monitor, hms(8, 0, 0))
+            .await;
+        assert_eq!(inverter.full_export, false);
+        assert_relative_eq!(inverter.target_soc, 27.0, epsilon = 1e-9);
     }
 }

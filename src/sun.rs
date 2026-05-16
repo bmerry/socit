@@ -207,27 +207,122 @@ where
     Matrix([l_x.0, l_y.0, l_z.0]) * r_tirs.normalized() // ignores TIRS -> ITRS corrections
 }
 
-/// Compute fraction of peak energy for a solar panel with given elevation and azimuth
-pub fn solar_fraction<Tz, U1, U2, U3, U4>(
-    lat: Angle<f64, U1>,
-    lon: Angle<f64, U2>,
-    elevation: Angle<f64, U3>,
-    azimuth: Angle<f64, U4>,
-    time: &DateTime<Tz>,
-) -> f64
+pub trait SolarPredictor<Tz: TimeZone>: Sync + Send {
+    /// Compute peak energy (in W) for a solar panel at a given time
+    fn power(&self, time: &DateTime<Tz>) -> f64;
+}
+
+pub struct PanelSolarPredictor<U1, U2, U3, U4>
 where
-    Tz: TimeZone,
     U1: Unit<f64>,
     U2: Unit<f64>,
     U3: Unit<f64>,
     U4: Unit<f64>,
 {
-    let sun_dir = sun_direction(lat, lon, time);
-    if sun_dir[2] <= 0.0 {
-        return 0.0; // below horizon
+    lat: Angle<f64, U1>,
+    lon: Angle<f64, U2>,
+    elevation: Angle<f64, U3>,
+    azimuth: Angle<f64, U4>,
+    power: f64,
+}
+
+impl<U1, U2, U3, U4> PanelSolarPredictor<U1, U2, U3, U4>
+where
+    U1: Unit<f64>,
+    U2: Unit<f64>,
+    U3: Unit<f64>,
+    U4: Unit<f64>,
+{
+    pub fn new(
+        lat: Angle<f64, U1>,
+        lon: Angle<f64, U2>,
+        elevation: Angle<f64, U3>,
+        azimuth: Angle<f64, U4>,
+        power: f64,
+    ) -> Self {
+        Self {
+            lat,
+            lon,
+            elevation,
+            azimuth,
+            power,
+        }
     }
-    let (s_el, c_el) = elevation.sin_cos();
-    let (s_az, c_az) = azimuth.sin_cos();
-    let panel_dir = Vector([c_el * s_az, c_el * c_az, s_el]);
-    dot(&sun_dir, &panel_dir).max(0.0)
+}
+
+impl<Tz, U1, U2, U3, U4> SolarPredictor<Tz> for PanelSolarPredictor<U1, U2, U3, U4>
+where
+    Tz: TimeZone,
+    U1: Unit<f64> + Sync + Send,
+    U2: Unit<f64> + Sync + Send,
+    U3: Unit<f64> + Sync + Send,
+    U4: Unit<f64> + Sync + Send,
+{
+    fn power(&self, time: &DateTime<Tz>) -> f64 {
+        let sun_dir = sun_direction(self.lat, self.lon, time);
+        if sun_dir[2] <= 0.0 {
+            return 0.0; // below horizon
+        }
+        let (s_el, c_el) = self.elevation.sin_cos();
+        let (s_az, c_az) = self.azimuth.sin_cos();
+        let panel_dir = Vector([c_el * s_az, c_el * c_az, s_el]);
+        self.power * dot(&sun_dir, &panel_dir).max(0.0)
+    }
+}
+
+pub struct ArraySolarPredictor<T> {
+    elements: Vec<T>,
+}
+
+impl<T> ArraySolarPredictor<T> {
+    pub fn new(elements: Vec<T>) -> Self {
+        Self { elements }
+    }
+}
+
+impl<Tz: TimeZone, T: SolarPredictor<Tz>> SolarPredictor<Tz> for ArraySolarPredictor<T> {
+    fn power(&self, time: &DateTime<Tz>) -> f64 {
+        self.elements.iter().map(|e| e.power(time)).sum()
+    }
+}
+
+#[cfg(test)]
+pub(crate) mod test {
+    use chrono::{DateTime, NaiveTime, TimeZone};
+
+    use crate::sun::SolarPredictor;
+
+    /// Simplified model (for testing).
+    ///
+    /// The power is linear over a given time range (every day, in UTC) and zero outside it.
+    pub struct LinearSolarPredictor {
+        start: NaiveTime,
+        stop: NaiveTime,
+        start_power: f64,
+        stop_power: f64,
+    }
+
+    impl LinearSolarPredictor {
+        pub fn new(start: NaiveTime, stop: NaiveTime, start_power: f64, stop_power: f64) -> Self {
+            Self {
+                start,
+                stop,
+                start_power,
+                stop_power,
+            }
+        }
+    }
+
+    impl<Tz: TimeZone> SolarPredictor<Tz> for LinearSolarPredictor {
+        fn power(&self, time: &DateTime<Tz>) -> f64 {
+            let t = time.to_utc().time();
+            if t < self.start || t >= self.stop {
+                0.0
+            } else {
+                let t_ofs = (t - self.start).num_milliseconds() as f64;
+                let stop_ofs = (self.stop - self.start).num_milliseconds() as f64;
+                t_ofs / stop_ofs * (self.stop_power - self.start_power) + self.start_power
+            }
+        }
+    }
 }
