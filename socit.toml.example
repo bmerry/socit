@@ -53,6 +53,10 @@ max_discharge_power = 400
 # overestimate.
 charge_power = 1800
 
+# Set to true to allow socit to change the export settings to export
+# power before the battery is full.
+control_export = false
+
 # Set to true to prevent actually changing any settings on the inverter
 # (the inverter is still read on startup to determine capacity etc).
 dry_run = false

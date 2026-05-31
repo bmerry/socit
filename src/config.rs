@@ -39,6 +39,8 @@ pub struct InverterConfig {
     pub min_discharge_power: f64,
     pub max_discharge_power: f64,
     pub charge_power: f64,
+    #[serde(default = "control_export_default")]
+    pub control_export: bool,
     #[serde(default = "dry_run_default")]
     pub dry_run: bool,
     #[serde(default)]
@@ -50,6 +52,10 @@ fn id_default() -> u8 {
 }
 
 fn dry_run_default() -> bool {
+    false
+}
+
+fn control_export_default() -> bool {
     false
 }
 

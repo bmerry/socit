@@ -90,7 +90,8 @@ When exporting solar electricity, the grid supplier may limit the amount of
 power exported. This can lead to lost opportunities if the battery is already
 full and hence there is nowhere to store the excess power. Socit can limit
 battery charging in the morning to leave storage space in the battery during
-peak hours.
+peak hours. Note that this needs to be specifically enabled in the config file
+(`control_export` setting).
 
 The algorithm for this works as follows. The change in the SoC is projected
 forward until theoretical PV next moves from above to below the export limit

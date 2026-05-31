@@ -272,7 +272,7 @@ async fn update_soc(
             est_start.elapsed().as_secs_f64()
         );
         target = current_soc.min(target_soc_high).max(target_soc_low);
-        full_export = if info.export_enabled {
+        full_export = if info.export_enabled && config.control_export {
             let low = target_soc_export_low.max(target_soc_low);
             let high = target_soc_export_high.max(target_soc_high);
             // Turn off full-export when battery is full, because Sunsynk has
@@ -566,6 +566,7 @@ mod test {
             min_discharge_power: 100.0,  // 2% per hour
             max_discharge_power: 1000.0, // 20% per hour
             charge_power: 2500.0,        // 50% per hour
+            control_export: true,
             dry_run: false,
             panels: Vec::new(),
         }
