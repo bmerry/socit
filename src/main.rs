@@ -83,9 +83,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
      * requires making config mutable).
      */
     let api = API::new(config.esp.key.clone())?;
-    let area = config.esp.area.clone();
+    let schedule_id = config.esp.schedule_id.clone();
     let esp_handle = tokio::spawn(async move {
-        control::poll_esp(&api, &area, config.esp.interval, &state, esp_token).await;
+        control::poll_esp(&api, &schedule_id, config.esp.interval, &state, esp_token).await;
     });
     let mut monitor: Box<dyn Monitor> = match &config.influxdb2 {
         Some(conf) => Box::new(Influxdb2Monitor::new(conf).await),

@@ -3,10 +3,10 @@
 # personal use) and fill in the key here.
 key = "YOUR-ESP-KEY"
 
-# Fill in the API name for your area. You can run a search with the following
-# command on UNIX (replace AREA-NAME and YOUR-ESP-KEY).
-# curl -L https://develop.sepush.co.za/business/2.0/areas_search?text=AREA-NAME --header "token: YOUR-ESP-KEY"
-area = "capetown-11-bergvliet"
+# Fill in the API name for your schedule ID. Consult the API documentation
+# (https://developer.sepush.co.za/business/3.0) for how to obtain your
+# schedule ID.
+schedule_id = "capetown-11"
 
 # Interval between queries to the EskomSePush API. The free tier allows
 # 50 queries per day, and querying every 40 minutes will use 36 of them,

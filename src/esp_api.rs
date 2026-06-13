@@ -28,28 +28,35 @@ pub struct Event {
 }
 
 #[derive(Clone, Debug, Deserialize)]
-pub struct Info {
+pub struct ScheduleSlot {
+    pub start: DateTime<Utc>,
+    pub end: DateTime<Utc>,
+}
+
+#[derive(Clone, Debug, Deserialize)]
+pub struct ScheduleStage {
     pub name: String,
-    pub region: String,
+    pub slots: Vec<ScheduleSlot>,
 }
 
 #[derive(Clone, Debug, Deserialize)]
 pub struct ScheduleDay {
     pub date: NaiveDate,
     pub name: String,
-    pub stages: Vec<Vec<String>>,
+    pub schedule: Vec<ScheduleStage>,
 }
 
 #[derive(Clone, Debug, Deserialize)]
 pub struct Schedule {
     pub days: Vec<ScheduleDay>,
+    pub schedule_name: String,
     pub source: String,
 }
 
 #[derive(Clone, Debug, Deserialize)]
-pub struct AreaResponse {
+pub struct ScheduleResponse {
     pub events: Vec<Event>,
-    pub info: Info,
+    pub name: String,
     pub schedule: Schedule,
 }
 
@@ -68,9 +75,9 @@ impl API {
         })
     }
 
-    pub async fn area(&self, id: &str) -> reqwest::Result<AreaResponse> {
+    pub async fn schedule(&self, id: &str) -> reqwest::Result<ScheduleResponse> {
         self.client
-            .get("https://developer.sepush.co.za/business/2.0/area")
+            .get("https://developer.sepush.co.za/business/3.0/schedule")
             .query(&[("id", id)])
             .header("Token", &self.key)
             .send()

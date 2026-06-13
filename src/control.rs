@@ -27,19 +27,19 @@ use tokio_stream::StreamMap;
 use tokio_util::sync::CancellationToken;
 
 use crate::config::{CoilConfig, Config, InverterConfig};
-use crate::esp_api::{API, AreaResponse};
+use crate::esp_api::{API, ScheduleResponse};
 use crate::inverter::{Info, Inverter, Result};
 use crate::monitoring::{CoilUpdate, Monitor, SocUpdate};
 use crate::sun::SolarPredictor;
 
 pub struct State {
-    pub response: AreaResponse,
+    pub response: ScheduleResponse,
     pub time: DateTime<Utc>,
 }
 
 pub async fn poll_esp(
     api: &API,
-    area_id: &str,
+    schedule_id: &str,
     interval: std::time::Duration,
     state: &Mutex<Option<State>>,
     token: CancellationToken,
@@ -51,7 +51,7 @@ pub async fn poll_esp(
             _ = interval.tick() => {},
             _ = token.cancelled() => { break; }
         }
-        match api.area(area_id).await {
+        match api.schedule(schedule_id).await {
             Ok(response) => {
                 let mut lock = state.lock().unwrap();
                 *lock = Some(State {
@@ -59,10 +59,10 @@ pub async fn poll_esp(
                     time: Utc::now(),
                 });
                 drop(lock);
-                info!("Successfully updated area info from EskomSePush");
+                info!("Successfully updated schedule info from EskomSePush");
             }
             Err(err) => {
-                warn!("Failed to update from EskomSePush: {err}");
+                warn!("Failed to update from EskomSePush: {err:?}");
             }
         }
     }
@@ -550,7 +550,7 @@ mod test {
 
     use super::{Controller, SocController, State};
     use crate::config::InverterConfig;
-    use crate::esp_api::AreaResponse;
+    use crate::esp_api::ScheduleResponse;
     use crate::inverter::test::TestInverter;
     use crate::monitoring::NullMonitor;
     use crate::sun::SolarPredictor;
@@ -573,16 +573,14 @@ mod test {
     }
 
     /// Fixture with no loadshedding
-    fn response_no_loadshedding() -> AreaResponse {
-        use crate::esp_api::{Info, Schedule};
-        AreaResponse {
+    fn response_no_loadshedding() -> ScheduleResponse {
+        use crate::esp_api::Schedule;
+        ScheduleResponse {
             events: Vec::new(),
-            info: Info {
-                name: "here".to_string(),
-                region: "region".to_string(),
-            },
+            name: "test schedule".to_string(),
             schedule: Schedule {
                 days: Vec::new(),
+                schedule_name: "test".to_string(),
                 source: "data".to_string(),
             },
         }
@@ -596,7 +594,7 @@ mod test {
         end_hour: u32,
         end_min: u32,
         end_sec: u32,
-    ) -> AreaResponse {
+    ) -> ScheduleResponse {
         let mut response = response_no_loadshedding();
         response.events.push(crate::esp_api::Event {
             start: hms(start_hour, start_min, start_sec),

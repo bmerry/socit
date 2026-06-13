@@ -63,7 +63,7 @@ fn control_export_default() -> bool {
 #[serde(deny_unknown_fields)]
 pub struct EspConfig {
     pub key: String,
-    pub area: String,
+    pub schedule_id: String,
     #[serde(default = "interval_default", with = "humantime_serde")]
     pub interval: Duration,
     #[serde(default = "timeout_default", with = "humantime_serde")]
