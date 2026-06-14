@@ -112,6 +112,16 @@ to avoid running the battery lower than the normal algorithm would do.
 
 ## Changelog
 
+### 0.5.0
+
+- Make it optional for socit to control whether to export all power to the
+  grid, with the `inverter.control_export` setting. It now defaults to false;
+  set it to true to restore the behaviour of 0.4.0.
+- Migrate to EskomSePush API v3. This requires your config file to be updated
+  to use a `schedule_id` instead of an `area`. Generally you can do this by
+  removing the last component of the area ID e.g. replace
+  `area = "capetown-11-bergvliet"` with `schedule_id = "capetown-11"`.
+
 ### 0.4.0
 
 - Make `charge_power` required. The README previously claimed it would be
