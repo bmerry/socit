@@ -47,7 +47,7 @@ impl Influxdb2Monitor {
                 } else {
                     info!(
                         "Successfully connected to Influxdb server at {}",
-                        &config.host
+                        config.host
                     );
                 }
             }
